@@ -1,0 +1,46 @@
+apiVersion: objectstorage.k8s.io/v1alpha1
+kind: BucketClass
+metadata:
+  name: cloudscale-lpg
+driverName: cloudscale-objectstorage.helmetica.io
+# Retain leaves the bucket and its objects user in place when the BucketClaim
+# goes away. Delete removes both.
+deletionPolicy: Delete
+parameters:
+  region: lpg
+  # Optional. Defaults to https://objects.<region>.cloudscale.ch
+  # endpointURL: https://objects.lpg.cloudscale.ch
+  # DeleteIfEmpty (default) refuses to drop a bucket that still holds objects.
+  bucketDeletionPolicy: DeleteIfEmpty
+---
+apiVersion: objectstorage.k8s.io/v1alpha1
+kind: BucketAccessClass
+metadata:
+  name: cloudscale-lpg
+driverName: cloudscale-objectstorage.helmetica.io
+# KEY is the only option. cloudscale.ch has no IAM, so aludel rejects
+# authenticationType: IAM with an Unimplemented error.
+authenticationType: KEY
+---
+apiVersion: objectstorage.k8s.io/v1alpha1
+kind: BucketClaim
+metadata:
+  name: my-test-bucket
+  namespace: default
+spec:
+  bucketClassName: cloudscale-lpg
+  protocols:
+    - S3
+---
+apiVersion: objectstorage.k8s.io/v1alpha1
+kind: BucketAccess
+metadata:
+  name: my-test-bucket-access
+  namespace: default
+spec:
+  bucketAccessClassName: cloudscale-lpg
+  bucketClaimName: my-test-bucket
+  protocol: S3
+  # The sidecar writes a BucketInfo JSON document into this secret, containing
+  # the owning objects user's access key, secret key, endpoint and region.
+  credentialsSecretName: my-test-bucket-credentials

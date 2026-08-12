@@ -1,0 +1,19 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Everything the driver owns lives here, including the cloudscale.ch API token.
+# The per-bucket credential secrets are written by the sidecar into the
+# consuming workload's namespace instead, and are not affected by this.
+namespace: aludel-cloudscale-system
+
+resources:
+  - namespace.yaml
+  - ../rbac
+  - deployment.yaml
+
+# Override for local testing, e.g.:
+#   kustomize edit set image ghcr.io/helmetica-framework/aludel-cloudscale=localhost:5000/aludel:dev
+images:
+  - name: ghcr.io/helmetica-framework/aludel-cloudscale
+    newTag: latest

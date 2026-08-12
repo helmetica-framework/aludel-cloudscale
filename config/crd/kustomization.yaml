@@ -1,0 +1,86 @@
+---
+# Upstream COSI ships its CRDs with no additionalPrinterColumns at all, so
+# `kubectl get buckets` prints only NAME and AGE. Printer columns are a CRD
+# field rather than part of the API types, so they can be added locally
+# without forking anything — every column below reads a field upstream
+# already populates.
+#
+# This wraps the upstream install so `kubectl apply -k config/crd` gives you
+# the CRDs, the controller and the columns in one shot, and re-applying
+# upstream never silently reverts them.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - github.com/kubernetes-sigs/container-object-storage-interface?ref=v0.2.2
+
+patches:
+  - target:
+      group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      name: buckets.objectstorage.k8s.io
+    patch: |-
+      - op: add
+        path: /spec/versions/0/additionalPrinterColumns
+        value:
+          - name: Ready
+            type: boolean
+            jsonPath: .status.bucketReady
+          - name: Bucket ID
+            type: string
+            jsonPath: .status.bucketID
+          - name: Class
+            type: string
+            jsonPath: .spec.bucketClassName
+          - name: Driver
+            type: string
+            priority: 1
+            jsonPath: .spec.driverName
+          - name: Age
+            type: date
+            jsonPath: .metadata.creationTimestamp
+
+  - target:
+      group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      name: bucketclaims.objectstorage.k8s.io
+    patch: |-
+      - op: add
+        path: /spec/versions/0/additionalPrinterColumns
+        value:
+          - name: Ready
+            type: boolean
+            jsonPath: .status.bucketReady
+          - name: Bucket
+            type: string
+            jsonPath: .status.bucketName
+          - name: Class
+            type: string
+            jsonPath: .spec.bucketClassName
+          - name: Age
+            type: date
+            jsonPath: .metadata.creationTimestamp
+
+  - target:
+      group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      name: bucketaccesses.objectstorage.k8s.io
+    patch: |-
+      - op: add
+        path: /spec/versions/0/additionalPrinterColumns
+        value:
+          - name: Granted
+            type: boolean
+            jsonPath: .status.accessGranted
+          - name: Account ID
+            type: string
+            jsonPath: .status.accountID
+          - name: Claim
+            type: string
+            jsonPath: .spec.bucketClaimName
+          - name: Secret
+            type: string
+            jsonPath: .spec.credentialsSecretName
+          - name: Age
+            type: date
+            jsonPath: .metadata.creationTimestamp

@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aludel-cloudscale
+  labels:
+    app.kubernetes.io/name: aludel-cloudscale
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aludel-cloudscale
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aludel-cloudscale
+    spec:
+      serviceAccountName: aludel-cloudscale
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        # The driver itself. It talks to the cloudscale.ch API and to the
+        # S3 endpoint, and serves COSI over the shared unix socket.
+        - name: aludel-cloudscale
+          image: ghcr.io/helmetica-framework/aludel-cloudscale:latest
+          # IfNotPresent so a `kind load docker-image` build is used as-is
+          # instead of being re-pulled from ghcr.
+          imagePullPolicy: IfNotPresent
+          args:
+            - driver
+            - --endpoint=unix:///var/lib/cosi/cosi.sock
+          env:
+            # Must be a read-write token: cloudscale.ch only returns objects
+            # user secret keys to read-write tokens.
+            - name: CLOUDSCALE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aludel-cloudscale-credentials
+                  key: token
+          volumeMounts:
+            - name: cosi-socket
+              mountPath: /var/lib/cosi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+
+        # Upstream COSI sidecar: watches Bucket/BucketAccess resources and
+        # translates them into gRPC calls on the socket above.
+        - name: objectstorage-provisioner-sidecar
+          # Kept in lockstep with the controller image pinned by the upstream
+          # v0.2.2 kustomization.
+          image: gcr.io/k8s-staging-sig-storage/objectstorage-sidecar:v20250905-controllerv0.2.0-rc1-100-gd904c62
+          args:
+            - --v=5
+          env:
+            - name: COSI_ENDPOINT
+              value: unix:///var/lib/cosi/cosi.sock
+          volumeMounts:
+            - name: cosi-socket
+              mountPath: /var/lib/cosi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: cosi-socket
+          emptyDir: {}
