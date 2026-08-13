@@ -16,11 +16,7 @@ var rootCmd = &cobra.Command{
 	Use:   "aludel-cloudscale",
 	Short: "A COSI driver for cloudscale.ch object storage",
 	Long: `aludel-cloudscale provisions cloudscale.ch S3 buckets through the Kubernetes
-Container Object Storage Interface (COSI).
-
-cloudscale.ch offers no IAM, roles or bucket policies, so aludel-cloudscale runs one
-objects user per bucket: the user is created together with the bucket and
-deleted with it, and every BucketAccess hands out that user's key pair.`,
+Container Object Storage Interface (COSI).`,
 }
 
 func init() {
