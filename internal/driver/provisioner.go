@@ -312,10 +312,15 @@ func (p *Provisioner) DriverGrantBucketAccess(ctx context.Context, req *cosi.Dri
 		// the only thing cloudscale.ch can do
 	case cosi.AuthenticationType_IAM:
 		return nil, status.Error(codes.Unimplemented,
-			"cloudscale.ch has no IAM; use authenticationType: KEY on the BucketAccessClass")
+			"cloudscale.ch has no IAM; use authenticationType: Key on the BucketAccessClass")
 	default:
+		// The sidecar sends UnknownAuthenticationType whenever the
+		// BucketAccessClass field matched neither "Key" nor "IAM". The CRD
+		// declares it as a plain string with no enum, so a typo or the wrong
+		// casing gets past the API server and only fails here.
 		return nil, status.Errorf(codes.InvalidArgument,
-			"unsupported authentication type %q", req.GetAuthenticationType())
+			"unsupported authentication type %q; set authenticationType to exactly %q on BucketAccessClass %q",
+			req.GetAuthenticationType(), "Key", req.GetName())
 	}
 
 	params, err := ParseBucketClassParameters(withRegion(req.GetParameters(), id.Region))

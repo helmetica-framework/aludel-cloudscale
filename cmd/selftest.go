@@ -84,7 +84,7 @@ and deletes both again unless --keep is given.`,
 		}
 		fmt.Printf("    ok  bucketID=%s\n", created.GetBucketId())
 
-		step(2, "DriverGrantBucketAccess", "authenticationType=KEY")
+		step(2, "DriverGrantBucketAccess", "authenticationType=Key")
 		granted, err := p.DriverGrantBucketAccess(ctx, &cosi.DriverGrantBucketAccessRequest{
 			BucketId:           created.GetBucketId(),
 			Name:               "selftest-access",

@@ -18,9 +18,14 @@ kind: BucketAccessClass
 metadata:
   name: cloudscale-lpg
 driverName: cloudscale-objectstorage.helmetica.io
-# KEY is the only option. cloudscale.ch has no IAM, so aludel rejects
-# authenticationType: IAM with an Unimplemented error.
-authenticationType: KEY
+# Key is the only option; cloudscale.ch has no IAM, so aludel-cloudscale
+# rejects authenticationType: IAM with an Unimplemented error.
+#
+# Mind the casing. The constant is "Key", not "KEY", and the CRD declares this
+# field as a plain string with no enum, so a wrong value is accepted by the API
+# server and only surfaces later as a FailedGrantAccess event reading
+# "unsupported authentication type UnknownAuthenticationType".
+authenticationType: Key
 ---
 apiVersion: objectstorage.k8s.io/v1alpha1
 kind: BucketClaim

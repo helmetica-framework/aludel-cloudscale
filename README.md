@@ -29,7 +29,7 @@ model:
 ### Consequences you should know before adopting this
 
 - **`authenticationType: IAM` is unsupported.** `aludel-cloudscale` returns
-  `Unimplemented`. Use `KEY`.
+  `Unimplemented`. Use `Key` (note the casing).
 - **Every `BucketAccess` on the same `Bucket` gets identical credentials.**
   There is no mechanism to admit a second identity to an existing bucket, so
   per-workload isolation within one bucket is not possible. Give each workload
@@ -79,7 +79,7 @@ Deploying into a different namespace means overriding it in both places:
 | `bucketDeletionPolicy` | no | `DeleteIfEmpty` | `DeleteIfEmpty` refuses to drop a non-empty bucket; `DeleteAll` purges every object and version first |
 | `s3PathStyle` | no | `true` | Use path-style addressing instead of virtual-hosted |
 
-`BucketAccessClass` needs no parameters beyond `authenticationType: KEY`.
+`BucketAccessClass` needs no parameters beyond `authenticationType: Key`.
 
 See `config/samples/bucketclass.yaml` for a full worked example.
 
