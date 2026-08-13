@@ -14,6 +14,16 @@ kind: Kustomization
 resources:
   - github.com/kubernetes-sigs/container-object-storage-interface?ref=v0.2.2
 
+# The upstream kustomization pins a controller image built five months before
+# the v0.2.2 tag, from a commit that still named buckets <bucketClassName><UID>.
+# PR #90 dropped the class name in favour of bucket-<UID>. Pin the image built
+# from the v0.2.2 commit itself so the deployed controller matches the source
+# this kustomization pulls, and keep it in step with the sidecar image in
+# config/manager/deployment.yaml.
+images:
+  - name: gcr.io/k8s-staging-sig-storage/objectstorage-controller
+    newTag: v20251203-v0.2.1-103-gf75d475
+
 patches:
   - target:
       group: apiextensions.k8s.io

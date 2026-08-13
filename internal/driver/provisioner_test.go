@@ -398,3 +398,42 @@ func withFakeClock(p *Provisioner, slept *[]time.Duration) {
 		return nil
 	}
 }
+
+// The bucket on cloudscale.ch must be named exactly what COSI called the
+// Bucket resource, so that one name identifies it everywhere.
+func TestCreateBucketUsesTheRequestedNameVerbatim(t *testing.T) {
+	p, users, store := newTestProvisioner()
+	const cosiName = "bucket-8f2a1c4e-1b3d-4e5f-9a7b-2c6d8e0f1a3b"
+
+	resp := createBucket(t, p, cosiName, testParams())
+
+	id, err := ParseBucketID(resp.GetBucketId())
+	if err != nil {
+		t.Fatalf("ParseBucketID: %v", err)
+	}
+	if id.Bucket != cosiName {
+		t.Errorf("bucket id carries %q, want the requested %q", id.Bucket, cosiName)
+	}
+	if _, ok := store.buckets[cosiName]; !ok {
+		t.Errorf("bucket %q was not created; store has %v", cosiName, store.buckets)
+	}
+	if got := users.users[id.UserID].Tags[tagBucket]; got != cosiName {
+		t.Errorf("objects user tagged %q, want %q", got, cosiName)
+	}
+}
+
+// Retries must still land on the same bucket and the same objects user.
+func TestCreateBucketIsIdempotentWithPrefixedNames(t *testing.T) {
+	p, users, _ := newTestProvisioner()
+	const cosiName = "bucket-8f2a1c4e-1b3d-4e5f-9a7b-2c6d8e0f1a3b"
+
+	first := createBucket(t, p, cosiName, testParams())
+	second := createBucket(t, p, cosiName, testParams())
+
+	if first.GetBucketId() != second.GetBucketId() {
+		t.Errorf("bucket id changed across retries: %q then %q", first.GetBucketId(), second.GetBucketId())
+	}
+	if len(users.users) != 1 {
+		t.Errorf("expected 1 objects user after retry, got %d", len(users.users))
+	}
+}

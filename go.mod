@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	github.com/cloudscale-ch/cloudscale-go-sdk/v6 v6.0.1
+	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/spf13/cobra v1.10.2
 	google.golang.org/grpc v1.83.0
@@ -14,7 +15,6 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.11 // indirect

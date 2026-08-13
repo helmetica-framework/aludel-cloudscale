@@ -101,6 +101,9 @@ func (p *Provisioner) DriverGetInfo(_ context.Context, _ *cosi.DriverGetInfoRequ
 // abandoned mid-flight, which `aludel-cloudscale gc` (not yet implemented) is meant to
 // clean up.
 func (p *Provisioner) DriverCreateBucket(ctx context.Context, req *cosi.DriverCreateBucketRequest) (*cosi.DriverCreateBucketResponse, error) {
+	// The name is used verbatim: the bucket on cloudscale.ch is called exactly
+	// what the Bucket resource is called, so one name identifies it in kubectl,
+	// in the logs and in the cloudscale.ch control panel.
 	name := req.GetName()
 	if name == "" {
 		return nil, status.Error(codes.InvalidArgument, "bucket name is required")

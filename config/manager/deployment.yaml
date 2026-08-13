@@ -56,9 +56,9 @@ spec:
         # Upstream COSI sidecar: watches Bucket/BucketAccess resources and
         # translates them into gRPC calls on the socket above.
         - name: objectstorage-provisioner-sidecar
-          # Kept in lockstep with the controller image pinned by the upstream
-          # v0.2.2 kustomization.
-          image: gcr.io/k8s-staging-sig-storage/objectstorage-sidecar:v20250905-controllerv0.2.0-rc1-100-gd904c62
+          # Built from the v0.2.2 commit, matching the controller image pinned
+          # in config/crd/kustomization.yaml. Upgrade both together.
+          image: gcr.io/k8s-staging-sig-storage/objectstorage-sidecar:v20251203-v0.2.1-103-gf75d475
           args:
             - --v=5
           env:

@@ -122,8 +122,14 @@ Note that the COSI controller does **not** name the bucket after your
 bucketName = fmt.Sprintf("bucket-%s", bucketClaim.ObjectMeta.UID)
 ```
 
-So the real bucket and its objects user are called `bucket-<uuid>`. Looking for
-the claim's name in the cloudscale.ch control panel will not find anything.
+The driver uses that name verbatim, so the bucket and its objects user are also
+called `bucket-<uuid>`: one name identifies them in `kubectl`, in the logs and
+in the cloudscale.ch control panel. Looking for the claim's name in the panel
+will not find anything.
+
+This is why `config/crd` pins the controller image as well as the manifests.
+The upstream kustomization ships an image predating PR #90, which named buckets
+`<bucketClassName><UID>` instead.
 
 ## Trying it on the athanor kind cluster
 
@@ -179,7 +185,7 @@ kubectl -n aludel-cloudscale-system logs deployment/aludel-cloudscale -c aludel-
 ```
 
 A successful run leaves a `Bucket` whose `spec.bucketID` looks like
-`rma/my-bucket-<uuid>/<objectsUserID>`, and a Secret with the credentials:
+`rma/bucket-<uuid>/<objectsUserID>`, and a Secret with the credentials:
 
 ```console
 kubectl get secret my-bucket-credentials \

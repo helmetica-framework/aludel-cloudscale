@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	cosi "sigs.k8s.io/container-object-storage-interface/proto"
 
@@ -59,8 +59,11 @@ and deletes both again unless --keep is given.`,
 		}
 
 		ctx := cmd.Context()
-		// Mirrors how the COSI controller names buckets: bucket-<uuid>.
-		name := fmt.Sprintf("aludel-selftest-%d", time.Now().Unix())
+		// A bare UUID, like the names the COSI controller generates. Bucket
+		// names are unique across all of cloudscale.ch, so the name has to
+		// carry no meaning; anything left behind is identified by the
+		// objects user's tags instead.
+		name := uuid.NewString()
 		params := map[string]string{
 			driver.ParamRegion:         flagSelftestRegion,
 			driver.ParamDeletionPolicy: string(driver.DeleteAll),
