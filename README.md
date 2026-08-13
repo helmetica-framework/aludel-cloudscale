@@ -9,37 +9,6 @@ Kubernetes workload ask for an S3 bucket with a `BucketClaim` and receive
 credentials in a Secret, without anybody touching the cloudscale.ch control
 panel.
 
-## The one design constraint
-
-cloudscale.ch has **no IAM, no roles, and no bucket policies**. The API offers
-exactly two primitives: objects users (`/v1/objects-users`) and their S3 key
-pairs. `PutBucketPolicy` is not available on the S3 endpoint either.
-
-That means a bucket is reachable by exactly one identity: the objects user that
-created it. `aludel-cloudscale` therefore runs a strict **one objects user per bucket**
-model:
-
-| COSI RPC | What aludel-cloudscale does |
-| --- | --- |
-| `DriverCreateBucket` | Creates a tagged objects user, then creates the bucket over S3 **as that user** |
-| `DriverGrantBucketAccess` | Reads the owning user's key pair back out of the cloudscale.ch API |
-| `DriverRevokeBucketAccess` | **No-op** |
-| `DriverDeleteBucket` | Deletes the bucket, then the objects user |
-
-### Consequences you should know before adopting this
-
-- **`authenticationType: IAM` is unsupported.** `aludel-cloudscale` returns
-  `Unimplemented`. Use `Key` (note the casing).
-- **Every `BucketAccess` on the same `Bucket` gets identical credentials.**
-  There is no mechanism to admit a second identity to an existing bucket, so
-  per-workload isolation within one bucket is not possible. Give each workload
-  its own `BucketClaim`.
-- **Revoke does nothing.** Deleting or rotating the only key pair would not
-  revoke one grant, it would sever every grant and lock the driver out of its
-  own bucket. Access ends when the `Bucket` is deleted.
-- **Brownfield buckets are not adoptable.** A bucket created outside `aludel-cloudscale`
-  has an owning user the driver does not know about.
-
 ## Configuration
 
 The driver needs a **read-write** cloudscale.ch API token in
