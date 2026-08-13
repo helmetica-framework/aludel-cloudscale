@@ -1,6 +1,6 @@
 # aludel-cloudscale
 
-> An aludel-cloudscale is the sealed vessel an alchemist sublimes into — a container you
+> An aludel is the sealed vessel an alchemist sublimes into — a container you
 > put things in and close.
 
 `aludel-cloudscale` is a [COSI](https://container-object-storage-interface.sigs.k8s.io/)
