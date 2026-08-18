@@ -157,7 +157,7 @@ A successful run leaves a `Bucket` whose `spec.bucketID` looks like
 `rma/bucket-<uuid>/<objectsUserID>`, and a Secret with the credentials:
 
 ```console
-kubectl get secret my-bucket-credentials \
+kubectl get secret my-test-bucket-credentials \
   -o jsonpath='{.data.BucketInfo}' | base64 -d | jq
 ```
 
