@@ -111,7 +111,10 @@ From the athanor devcontainer, with the cluster already up (`just ignite`):
 
 ```console
 export KUBECONFIG=/workspaces/athanor/.kind/kind-config
-cd /workspaces/athanor/aludel-cloudscale
+mkdir /workspaces/athanor/reagents
+cd /workspaces/athanor/reagents
+git clone git@github.com:helmetica-framework/aludel-cloudscale.git 
+cd /workspaces/athanor/reagents/aludel-cloudscale
 ```
 
 **1. Install COSI itself** — the CRDs and the central controller, which is a
