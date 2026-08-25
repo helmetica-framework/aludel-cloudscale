@@ -1,0 +1,57 @@
+# RBAC for the COSI sidecar running next to aludel. The driver container itself
+# needs no Kubernetes access at all — it only talks to cloudscale.ch.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aludel-cloudscale-sidecar
+rules:
+  - apiGroups: ["objectstorage.k8s.io"]
+    resources: ["buckets", "bucketaccesses", "bucketclaims", "bucketaccessclasses", "bucketclasses"]
+    verbs: ["get", "list", "watch", "update", "create", "delete"]
+  - apiGroups: ["objectstorage.k8s.io"]
+    resources: ["buckets/status", "bucketaccesses/status", "bucketclaims/status", "bucketaccessclasses/status"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["secrets", "events"]
+    verbs: ["get", "delete", "update", "create"]
+---
+# The sidecar runs leader election against a Lease named after the driver, in
+# its own namespace. Namespaced on purpose: nothing here needs cluster scope.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aludel-cloudscale-leaderelection
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "watch", "list", "delete", "update", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aludel-cloudscale-leaderelection
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aludel-cloudscale-leaderelection
+subjects:
+  - kind: ServiceAccount
+    name: aludel-cloudscale
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aludel-cloudscale
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aludel-cloudscale-sidecar
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aludel-cloudscale-sidecar
+subjects:
+  - kind: ServiceAccount
+    name: aludel-cloudscale
+    namespace: aludel-cloudscale-system
