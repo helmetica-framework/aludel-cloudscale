@@ -99,5 +99,7 @@ gopkg.in/ini.v1 v1.67.2/go.mod h1:x/cyOwCgZqOkJoDIJ3c1KNHMo10+nLGAhh+kn3Zizss=
 gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+sigs.k8s.io/container-object-storage-interface/proto v0.0.0-20260806173055-cc544691e2ef h1:abPjqOdUyYTTzuF1efMN8TEamdZwndYvA5uVISelPiU=
+sigs.k8s.io/container-object-storage-interface/proto v0.0.0-20260806173055-cc544691e2ef/go.mod h1:KbbX956bZZsBRdk+eOj+yASo80IixY3hlyqBUsICreQ=
 sigs.k8s.io/container-object-storage-interface/proto v0.2.2 h1:sdbkQU4d+zvFKxSQjEomLdnsErKN8ON92aUUJ6N0dOw=
 sigs.k8s.io/container-object-storage-interface/proto v0.2.2/go.mod h1:MmjK06anCgKf/ESX/sqx+G9DV8i19PJiLSutp0TNF5g=

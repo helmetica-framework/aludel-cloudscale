@@ -84,18 +84,36 @@ and deletes both again unless --keep is given.`,
 		}
 		fmt.Printf("    ok  bucketID=%s\n", created.GetBucketId())
 
-		step(2, "DriverGrantBucketAccess", "authenticationType=Key")
+		step(2, "DriverGetBucket", "bucketID=%s", created.GetBucketId())
+		got, err := p.DriverGetBucket(ctx, &cosi.DriverGetBucketRequest{
+			BucketId:   created.GetBucketId(),
+			Protocols:  []*cosi.ObjectProtocol{{Type: cosi.ObjectProtocol_S3}},
+			Parameters: params,
+		})
+		if err != nil {
+			return fmt.Errorf("DriverGetBucket failed: %w", err)
+		}
+		fmt.Printf("    ok  bucket=%s endpoint=%s\n",
+			got.GetProtocols().GetS3().GetBucketId(), got.GetProtocols().GetS3().GetEndpoint())
+
+		step(3, "DriverGrantBucketAccess", "authenticationType=Key accessMode=ReadWrite")
 		granted, err := p.DriverGrantBucketAccess(ctx, &cosi.DriverGrantBucketAccessRequest{
-			BucketId:           created.GetBucketId(),
-			Name:               "selftest-access",
-			AuthenticationType: cosi.AuthenticationType_Key,
+			AccountName:        "selftest-access",
+			Protocol:           &cosi.ObjectProtocol{Type: cosi.ObjectProtocol_S3},
+			AuthenticationType: &cosi.AuthenticationType{Type: cosi.AuthenticationType_KEY},
+			Parameters:         params,
+			Buckets: []*cosi.DriverGrantBucketAccessRequest_AccessedBucket{{
+				BucketId:   created.GetBucketId(),
+				AccessMode: &cosi.AccessMode{Mode: cosi.AccessMode_READ_WRITE},
+			}},
 		})
 		if err != nil {
 			return fmt.Errorf("DriverGrantBucketAccess failed: %w", err)
 		}
-		secrets := granted.GetCredentials()["s3"].GetSecrets()
+		info := granted.GetBuckets()[0].GetBucketInfo().GetS3()
 		fmt.Printf("    ok  accountID=%s accessKeyID=%s endpoint=%s region=%s\n",
-			granted.GetAccountId(), secrets["accessKeyID"], secrets["endpoint"], secrets["region"])
+			granted.GetAccountId(), granted.GetCredentials().GetS3().GetAccessKeyId(),
+			info.GetEndpoint(), info.GetRegion())
 
 		if flagSelftestKeep {
 			fmt.Printf("\n--keep given: leaving bucket %q and its objects user in place.\n", name)
@@ -103,16 +121,16 @@ and deletes both again unless --keep is given.`,
 			return nil
 		}
 
-		step(3, "DriverDeleteBucket", "bucketDeletionPolicy=DeleteAll")
+		step(4, "DriverDeleteBucket", "bucketDeletionPolicy=DeleteAll")
 		if _, err := p.DriverDeleteBucket(ctx, &cosi.DriverDeleteBucketRequest{
-			BucketId:      created.GetBucketId(),
-			DeleteContext: params,
+			BucketId:   created.GetBucketId(),
+			Parameters: params,
 		}); err != nil {
 			return fmt.Errorf("DriverDeleteBucket failed: %w", err)
 		}
 		fmt.Printf("    ok  bucket and objects user removed\n")
 
-		fmt.Printf("\nAll three RPCs succeeded. The cloudscale.ch and S3 paths work;\n")
+		fmt.Printf("\nAll four RPCs succeeded. The cloudscale.ch and S3 paths work;\n")
 		fmt.Printf("if the driver still misbehaves in-cluster the problem is in the COSI wiring.\n")
 		return nil
 	},

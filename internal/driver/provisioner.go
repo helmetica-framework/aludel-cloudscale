@@ -11,18 +11,6 @@ import (
 	cosi "sigs.k8s.io/container-object-storage-interface/proto"
 )
 
-// Keys of the credential map handed back to the sidecar. They must match
-// sigs.k8s.io/container-object-storage-interface/client/apis/objectstorage/consts,
-// which is where the sidecar reads them from when it assembles the BucketInfo
-// secret. Duplicated here so the driver does not pull in client-go.
-const (
-	protocolS3          = "s3"
-	credAccessKeyID     = "accessKeyID"
-	credAccessSecretKey = "accessSecretKey"
-	credEndpoint        = "endpoint"
-	credRegion          = "region"
-)
-
 // Tag keys set on every objects user aludel-cloudscale creates. They are what
 // makes DriverCreateBucket idempotent: on retry the driver finds the user it
 // created on the previous attempt instead of creating a second one.
@@ -89,7 +77,34 @@ func (p *Provisioner) DriverGetInfo(_ context.Context, _ *cosi.DriverGetInfoRequ
 	if p.Name == "" {
 		return nil, status.Error(codes.Internal, "driver name is not configured")
 	}
-	return &cosi.DriverGetInfoResponse{Name: p.Name}, nil
+	// The sidecar checks a BucketClaim's requested protocols against this list before it
+	// ever calls the driver, so an Azure claim is refused rather than reaching us.
+	return &cosi.DriverGetInfoResponse{
+		Name:               p.Name,
+		SupportedProtocols: []*cosi.ObjectProtocol{s3Protocol()},
+	}, nil
+}
+
+// s3Protocol is the only protocol cloudscale.ch object storage speaks.
+func s3Protocol() *cosi.ObjectProtocol {
+	return &cosi.ObjectProtocol{Type: cosi.ObjectProtocol_S3}
+}
+
+// s3BucketInfo is what a client needs to reach the bucket: the sidecar writes each field
+// into its own key of the BucketAccess secret.
+func s3BucketInfo(id BucketID, params *BucketClassParameters) *cosi.ObjectProtocolAndBucketInfo {
+	style := cosi.S3AddressingStyle_VIRTUAL
+	if params.PathStyle {
+		style = cosi.S3AddressingStyle_PATH
+	}
+	return &cosi.ObjectProtocolAndBucketInfo{
+		S3: &cosi.S3BucketInfo{
+			BucketId:        id.Bucket,
+			Endpoint:        params.EndpointURL,
+			Region:          params.Region,
+			AddressingStyle: &cosi.S3AddressingStyle{Style: style},
+		},
+	}
 }
 
 // DriverCreateBucket creates the objects user that will own the bucket, then
@@ -146,15 +161,38 @@ func (p *Provisioner) DriverCreateBucket(ctx context.Context, req *cosi.DriverCr
 	log.Info("bucket provisioned", "bucketID", id.String(), "objectsUser", user.ID)
 
 	return &cosi.DriverCreateBucketResponse{
-		BucketId: id.String(),
-		BucketInfo: &cosi.Protocol{
-			Type: &cosi.Protocol_S3{
-				S3: &cosi.S3{
-					Region:           params.Region,
-					SignatureVersion: cosi.S3SignatureVersion_S3V4,
-				},
-			},
-		},
+		BucketId:  id.String(),
+		Protocols: s3BucketInfo(id, params),
+	}, nil
+}
+
+// DriverGetBucket reports what a bucket the driver already provisioned looks like.
+//
+// COSI calls it to adopt a Bucket whose BucketClaim it has lost track of, so it must not
+// create anything: an id whose objects user is gone is reported as NotFound rather than
+// re-provisioned.
+func (p *Provisioner) DriverGetBucket(ctx context.Context, req *cosi.DriverGetBucketRequest) (*cosi.DriverGetBucketResponse, error) {
+	id, err := ParseBucketID(req.GetBucketId())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	params, err := ParseBucketClassParameters(withRegion(req.GetParameters(), id.Region))
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid BucketClass parameters: %v", err)
+	}
+
+	// The objects user owns the bucket, so its absence is the bucket's absence as far as
+	// this driver is concerned: nothing could reach the bucket without it.
+	if _, err := p.Users.Get(ctx, id.UserID); errors.Is(err, ErrNotFound) {
+		return nil, status.Errorf(codes.NotFound, "objects user %q for bucket %q no longer exists", id.UserID, id.Bucket)
+	} else if err != nil {
+		return nil, status.Errorf(codes.Internal, "fetching objects user %q: %v", id.UserID, err)
+	}
+
+	return &cosi.DriverGetBucketResponse{
+		BucketId:  req.GetBucketId(),
+		Protocols: s3BucketInfo(id, params),
 	}, nil
 }
 
@@ -240,11 +278,11 @@ func (p *Provisioner) DriverDeleteBucket(ctx context.Context, req *cosi.DriverDe
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	// delete_context carries the BucketClass parameters the bucket was created
-	// with. Fall back to defaults derived from the bucket ID if it is empty.
-	params, err := ParseBucketClassParameters(withRegion(req.GetDeleteContext(), id.Region))
+	// parameters carries the BucketClass the bucket was created with. Fall back to
+	// defaults derived from the bucket ID if it is empty.
+	params, err := ParseBucketClassParameters(withRegion(req.GetParameters(), id.Region))
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid delete context: %v", err)
+		return nil, status.Errorf(codes.InvalidArgument, "invalid BucketClass parameters: %v", err)
 	}
 
 	log := p.log().With("bucket", id.Bucket, "objectsUser", id.UserID)
@@ -302,25 +340,44 @@ func (p *Provisioner) DriverDeleteBucket(ctx context.Context, req *cosi.DriverDe
 // let a second user into an existing bucket, so every BucketAccess on a given
 // Bucket resolves to the same key pair.
 func (p *Provisioner) DriverGrantBucketAccess(ctx context.Context, req *cosi.DriverGrantBucketAccessRequest) (*cosi.DriverGrantBucketAccessResponse, error) {
-	id, err := ParseBucketID(req.GetBucketId())
+	// One account, one key pair, one bucket. The key pair handed back is the bucket
+	// owner's, and every bucket has an owner of its own, so a grant spanning several
+	// buckets has no single credential that could satisfy it.
+	buckets := req.GetBuckets()
+	if len(buckets) != 1 {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"this driver grants access to exactly one bucket per BucketAccess, got %d; set multiBucketAccess: SingleBucket on BucketAccessClass %q",
+			len(buckets), req.GetAccountName())
+	}
+	accessed := buckets[0]
+
+	id, err := ParseBucketID(accessed.GetBucketId())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	switch req.GetAuthenticationType() {
-	case cosi.AuthenticationType_Key:
+	switch req.GetAuthenticationType().GetType() {
+	case cosi.AuthenticationType_KEY:
 		// the only thing cloudscale.ch can do
-	case cosi.AuthenticationType_IAM:
+	case cosi.AuthenticationType_SERVICE_ACCOUNT:
 		return nil, status.Error(codes.Unimplemented,
 			"cloudscale.ch has no IAM; use authenticationType: Key on the BucketAccessClass")
 	default:
-		// The sidecar sends UnknownAuthenticationType whenever the
-		// BucketAccessClass field matched neither "Key" nor "IAM". The CRD
-		// declares it as a plain string with no enum, so a typo or the wrong
-		// casing gets past the API server and only fails here.
 		return nil, status.Errorf(codes.InvalidArgument,
-			"unsupported authentication type %q; set authenticationType to exactly %q on BucketAccessClass %q",
-			req.GetAuthenticationType(), "Key", req.GetName())
+			"unsupported authentication type %q; set authenticationType to exactly %q on the BucketAccessClass",
+			req.GetAuthenticationType().GetType(), "Key")
+	}
+
+	if protocol := req.GetProtocol().GetType(); protocol != cosi.ObjectProtocol_S3 {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"cloudscale.ch object storage speaks S3, not %q", protocol)
+	}
+
+	// The credentials are the bucket owner's, which is full access. Handing them out for a
+	// narrower request would grant more than was asked for, so say so instead.
+	if mode := accessed.GetAccessMode().GetMode(); mode != cosi.AccessMode_READ_WRITE {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"cloudscale.ch has no bucket policies, so access is the bucket owner's key pair and always read-write; accessMode %q cannot be honoured", mode)
 	}
 
 	params, err := ParseBucketClassParameters(withRegion(req.GetParameters(), id.Region))
@@ -340,18 +397,18 @@ func (p *Provisioner) DriverGrantBucketAccess(ctx context.Context, req *cosi.Dri
 	}
 
 	p.log().Info("granted bucket access",
-		"bucket", id.Bucket, "objectsUser", user.ID, "bucketAccess", req.GetName())
+		"bucket", id.Bucket, "objectsUser", user.ID, "account", req.GetAccountName())
 
 	return &cosi.DriverGrantBucketAccessResponse{
 		AccountId: user.ID,
-		Credentials: map[string]*cosi.CredentialDetails{
-			protocolS3: {
-				Secrets: map[string]string{
-					credAccessKeyID:     user.AccessKey,
-					credAccessSecretKey: user.SecretKey,
-					credEndpoint:        params.EndpointURL,
-					credRegion:          params.Region,
-				},
+		Buckets: []*cosi.DriverGrantBucketAccessResponse_BucketInfo{{
+			BucketId:   accessed.GetBucketId(),
+			BucketInfo: s3BucketInfo(id, params),
+		}},
+		Credentials: &cosi.CredentialInfo{
+			S3: &cosi.S3CredentialInfo{
+				AccessKeyId:     user.AccessKey,
+				AccessSecretKey: user.SecretKey,
 			},
 		},
 	}, nil
@@ -363,8 +420,12 @@ func (p *Provisioner) DriverGrantBucketAccess(ctx context.Context, req *cosi.Dri
 // them would not revoke one grant, it would sever every grant and lock the
 // driver out of its own bucket. Access ends when the Bucket is deleted.
 func (p *Provisioner) DriverRevokeBucketAccess(_ context.Context, req *cosi.DriverRevokeBucketAccessRequest) (*cosi.DriverRevokeBucketAccessResponse, error) {
+	ids := make([]string, 0, len(req.GetBuckets()))
+	for _, bucket := range req.GetBuckets() {
+		ids = append(ids, bucket.GetBucketId())
+	}
 	p.log().Info("revoke is a no-op on cloudscale.ch; credentials live and die with the bucket",
-		"bucketID", req.GetBucketId(), "accountID", req.GetAccountId())
+		"bucketIDs", ids, "accountID", req.GetAccountId())
 	return &cosi.DriverRevokeBucketAccessResponse{}, nil
 }
 
