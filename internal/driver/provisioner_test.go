@@ -63,7 +63,7 @@ func TestCreateBucketProvisionsUserAndBucket(t *testing.T) {
 	if _, ok := store.buckets["my-bucket"]; !ok {
 		t.Error("bucket was not created")
 	}
-	if got := resp.GetBucketInfo().GetS3().GetRegion(); got != "rma" {
+	if got := resp.GetProtocols().GetS3().GetRegion(); got != "rma" {
 		t.Errorf("bucket info region = %q, want %q", got, "rma")
 	}
 }
@@ -127,16 +127,26 @@ func TestCreateBucketRequiresRegion(t *testing.T) {
 	requireCode(t, err, codes.InvalidArgument)
 }
 
+// grantRequest is a well-formed v1alpha2 grant for one bucket, which tests then bend.
+func grantRequest(bucketID, account string) *cosi.DriverGrantBucketAccessRequest {
+	return &cosi.DriverGrantBucketAccessRequest{
+		AccountName:        account,
+		Protocol:           &cosi.ObjectProtocol{Type: cosi.ObjectProtocol_S3},
+		AuthenticationType: &cosi.AuthenticationType{Type: cosi.AuthenticationType_KEY},
+		Parameters:         testParams(),
+		Buckets: []*cosi.DriverGrantBucketAccessRequest_AccessedBucket{{
+			BucketId:   bucketID,
+			AccessMode: &cosi.AccessMode{Mode: cosi.AccessMode_READ_WRITE},
+		}},
+	}
+}
+
 func TestGrantBucketAccessReturnsOwnerCredentials(t *testing.T) {
 	p, users, _ := newTestProvisioner()
 	created := createBucket(t, p, "my-bucket", testParams())
 	id, _ := ParseBucketID(created.GetBucketId())
 
-	resp, err := p.DriverGrantBucketAccess(context.Background(), &cosi.DriverGrantBucketAccessRequest{
-		BucketId:           created.GetBucketId(),
-		Name:               "my-access",
-		AuthenticationType: cosi.AuthenticationType_Key,
-	})
+	resp, err := p.DriverGrantBucketAccess(context.Background(), grantRequest(created.GetBucketId(), "my-access"))
 	if err != nil {
 		t.Fatalf("DriverGrantBucketAccess: %v", err)
 	}
@@ -144,22 +154,30 @@ func TestGrantBucketAccessReturnsOwnerCredentials(t *testing.T) {
 	if resp.GetAccountId() != id.UserID {
 		t.Errorf("account id = %q, want the owning user %q", resp.GetAccountId(), id.UserID)
 	}
-	creds, ok := resp.GetCredentials()[protocolS3]
-	if !ok {
-		t.Fatalf("no %q credentials in response", protocolS3)
-	}
+
+	creds := resp.GetCredentials().GetS3()
 	want := users.users[id.UserID]
-	if creds.Secrets[credAccessKeyID] != want.AccessKey {
-		t.Errorf("access key = %q, want %q", creds.Secrets[credAccessKeyID], want.AccessKey)
+	if creds.GetAccessKeyId() != want.AccessKey {
+		t.Errorf("access key = %q, want %q", creds.GetAccessKeyId(), want.AccessKey)
 	}
-	if creds.Secrets[credAccessSecretKey] != want.SecretKey {
-		t.Errorf("secret key = %q, want %q", creds.Secrets[credAccessSecretKey], want.SecretKey)
+	if creds.GetAccessSecretKey() != want.SecretKey {
+		t.Errorf("secret key = %q, want %q", creds.GetAccessSecretKey(), want.SecretKey)
 	}
-	if got, want := creds.Secrets[credEndpoint], DefaultEndpointURL("rma"); got != want {
+
+	// The bucket info travels beside the credentials now, one field per value, rather
+	// than as extra keys in a credentials map.
+	if len(resp.GetBuckets()) != 1 {
+		t.Fatalf("got %d buckets in the response, want 1", len(resp.GetBuckets()))
+	}
+	info := resp.GetBuckets()[0].GetBucketInfo().GetS3()
+	if got, want := info.GetEndpoint(), DefaultEndpointURL("rma"); got != want {
 		t.Errorf("endpoint = %q, want %q", got, want)
 	}
-	if creds.Secrets[credRegion] != "rma" {
-		t.Errorf("region = %q, want %q", creds.Secrets[credRegion], "rma")
+	if info.GetRegion() != "rma" {
+		t.Errorf("region = %q, want %q", info.GetRegion(), "rma")
+	}
+	if info.GetBucketId() != id.Bucket {
+		t.Errorf("s3 bucket = %q, want %q", info.GetBucketId(), id.Bucket)
 	}
 }
 
@@ -171,11 +189,7 @@ func TestGrantBucketAccessIsSharedAcrossGrants(t *testing.T) {
 	created := createBucket(t, p, "my-bucket", testParams())
 
 	grant := func(name string) *cosi.DriverGrantBucketAccessResponse {
-		resp, err := p.DriverGrantBucketAccess(context.Background(), &cosi.DriverGrantBucketAccessRequest{
-			BucketId:           created.GetBucketId(),
-			Name:               name,
-			AuthenticationType: cosi.AuthenticationType_Key,
-		})
+		resp, err := p.DriverGrantBucketAccess(context.Background(), grantRequest(created.GetBucketId(), name))
 		if err != nil {
 			t.Fatalf("DriverGrantBucketAccess(%q): %v", name, err)
 		}
@@ -188,16 +202,47 @@ func TestGrantBucketAccessIsSharedAcrossGrants(t *testing.T) {
 	}
 }
 
-func TestGrantBucketAccessRejectsIAM(t *testing.T) {
+func TestGrantBucketAccessRejectsServiceAccountAuth(t *testing.T) {
 	p, _, _ := newTestProvisioner()
 	created := createBucket(t, p, "my-bucket", testParams())
 
-	_, err := p.DriverGrantBucketAccess(context.Background(), &cosi.DriverGrantBucketAccessRequest{
-		BucketId:           created.GetBucketId(),
-		Name:               "my-access",
-		AuthenticationType: cosi.AuthenticationType_IAM,
-	})
+	req := grantRequest(created.GetBucketId(), "my-access")
+	req.AuthenticationType = &cosi.AuthenticationType{Type: cosi.AuthenticationType_SERVICE_ACCOUNT}
+
+	_, err := p.DriverGrantBucketAccess(context.Background(), req)
 	requireCode(t, err, codes.Unimplemented)
+}
+
+// A grant spanning several buckets has no single key pair that could satisfy it: every
+// bucket is owned by an objects user of its own.
+func TestGrantBucketAccessRejectsMultipleBuckets(t *testing.T) {
+	p, _, _ := newTestProvisioner()
+	a := createBucket(t, p, "bucket-a", testParams())
+	b := createBucket(t, p, "bucket-b", testParams())
+
+	req := grantRequest(a.GetBucketId(), "my-access")
+	req.Buckets = append(req.Buckets, &cosi.DriverGrantBucketAccessRequest_AccessedBucket{
+		BucketId:   b.GetBucketId(),
+		AccessMode: &cosi.AccessMode{Mode: cosi.AccessMode_READ_WRITE},
+	})
+
+	_, err := p.DriverGrantBucketAccess(context.Background(), req)
+	requireCode(t, err, codes.InvalidArgument)
+}
+
+// The credentials handed back are the bucket owner's, so a narrower request would be
+// answered with more access than it asked for.
+func TestGrantBucketAccessRejectsNarrowerAccessModes(t *testing.T) {
+	p, _, _ := newTestProvisioner()
+	created := createBucket(t, p, "my-bucket", testParams())
+
+	for _, mode := range []cosi.AccessMode_Mode{cosi.AccessMode_READ_ONLY, cosi.AccessMode_WRITE_ONLY} {
+		req := grantRequest(created.GetBucketId(), "my-access")
+		req.Buckets[0].AccessMode = &cosi.AccessMode{Mode: mode}
+
+		_, err := p.DriverGrantBucketAccess(context.Background(), req)
+		requireCode(t, err, codes.InvalidArgument)
+	}
 }
 
 // A read-only cloudscale.ch API token yields users without secret keys. That
@@ -208,11 +253,7 @@ func TestGrantBucketAccessFailsWithoutSecretKey(t *testing.T) {
 	id, _ := ParseBucketID(created.GetBucketId())
 	users.users[id.UserID].SecretKey = ""
 
-	_, err := p.DriverGrantBucketAccess(context.Background(), &cosi.DriverGrantBucketAccessRequest{
-		BucketId:           created.GetBucketId(),
-		Name:               "my-access",
-		AuthenticationType: cosi.AuthenticationType_Key,
-	})
+	_, err := p.DriverGrantBucketAccess(context.Background(), grantRequest(created.GetBucketId(), "my-access"))
 	requireCode(t, err, codes.Internal)
 }
 
@@ -221,8 +262,8 @@ func TestDeleteBucketRemovesBucketAndUser(t *testing.T) {
 	created := createBucket(t, p, "my-bucket", testParams())
 
 	if _, err := p.DriverDeleteBucket(context.Background(), &cosi.DriverDeleteBucketRequest{
-		BucketId:      created.GetBucketId(),
-		DeleteContext: testParams(),
+		BucketId:   created.GetBucketId(),
+		Parameters: testParams(),
 	}); err != nil {
 		t.Fatalf("DriverDeleteBucket: %v", err)
 	}
@@ -241,8 +282,8 @@ func TestDeleteBucketRefusesNonEmptyByDefault(t *testing.T) {
 	store.buckets["my-bucket"].objects = 3
 
 	_, err := p.DriverDeleteBucket(context.Background(), &cosi.DriverDeleteBucketRequest{
-		BucketId:      created.GetBucketId(),
-		DeleteContext: testParams(),
+		BucketId:   created.GetBucketId(),
+		Parameters: testParams(),
 	})
 	requireCode(t, err, codes.FailedPrecondition)
 
@@ -259,8 +300,8 @@ func TestDeleteBucketDeleteAllEmptiesFirst(t *testing.T) {
 	store.buckets["my-bucket"].objects = 3
 
 	if _, err := p.DriverDeleteBucket(context.Background(), &cosi.DriverDeleteBucketRequest{
-		BucketId:      created.GetBucketId(),
-		DeleteContext: params,
+		BucketId:   created.GetBucketId(),
+		Parameters: params,
 	}); err != nil {
 		t.Fatalf("DriverDeleteBucket: %v", err)
 	}
@@ -275,8 +316,8 @@ func TestDeleteBucketIsIdempotent(t *testing.T) {
 
 	for i := range 2 {
 		if _, err := p.DriverDeleteBucket(context.Background(), &cosi.DriverDeleteBucketRequest{
-			BucketId:      created.GetBucketId(),
-			DeleteContext: testParams(),
+			BucketId:   created.GetBucketId(),
+			Parameters: testParams(),
 		}); err != nil {
 			t.Fatalf("DriverDeleteBucket attempt %d: %v", i+1, err)
 		}
@@ -297,8 +338,10 @@ func TestRevokeBucketAccessIsNoOp(t *testing.T) {
 	created := createBucket(t, p, "my-bucket", testParams())
 
 	if _, err := p.DriverRevokeBucketAccess(context.Background(), &cosi.DriverRevokeBucketAccessRequest{
-		BucketId:  created.GetBucketId(),
 		AccountId: "user-1",
+		Buckets: []*cosi.DriverRevokeBucketAccessRequest_AccessedBucket{
+			{BucketId: created.GetBucketId()},
+		},
 	}); err != nil {
 		t.Fatalf("DriverRevokeBucketAccess: %v", err)
 	}
@@ -435,5 +478,61 @@ func TestCreateBucketIsIdempotentWithPrefixedNames(t *testing.T) {
 	}
 	if len(users.users) != 1 {
 		t.Errorf("expected 1 objects user after retry, got %d", len(users.users))
+	}
+}
+
+func TestGetBucketReportsAProvisionedBucket(t *testing.T) {
+	p, _, _ := newTestProvisioner()
+	created := createBucket(t, p, "my-bucket", testParams())
+	id, _ := ParseBucketID(created.GetBucketId())
+
+	resp, err := p.DriverGetBucket(context.Background(), &cosi.DriverGetBucketRequest{
+		BucketId:   created.GetBucketId(),
+		Protocols:  []*cosi.ObjectProtocol{{Type: cosi.ObjectProtocol_S3}},
+		Parameters: testParams(),
+	})
+	if err != nil {
+		t.Fatalf("DriverGetBucket: %v", err)
+	}
+
+	if resp.GetBucketId() != created.GetBucketId() {
+		t.Errorf("bucket id = %q, want %q", resp.GetBucketId(), created.GetBucketId())
+	}
+	if got := resp.GetProtocols().GetS3().GetBucketId(); got != id.Bucket {
+		t.Errorf("s3 bucket = %q, want %q", got, id.Bucket)
+	}
+	if got, want := resp.GetProtocols().GetS3().GetEndpoint(), DefaultEndpointURL("rma"); got != want {
+		t.Errorf("endpoint = %q, want %q", got, want)
+	}
+}
+
+// Adoption must never provision: a bucket whose objects user is gone is gone, and saying
+// so is what lets COSI mark the Bucket lost instead of handing out dead credentials.
+func TestGetBucketIsNotFoundOnceItsUserIsGone(t *testing.T) {
+	p, users, _ := newTestProvisioner()
+	created := createBucket(t, p, "my-bucket", testParams())
+	id, _ := ParseBucketID(created.GetBucketId())
+	delete(users.users, id.UserID)
+
+	_, err := p.DriverGetBucket(context.Background(), &cosi.DriverGetBucketRequest{
+		BucketId:   created.GetBucketId(),
+		Parameters: testParams(),
+	})
+	requireCode(t, err, codes.NotFound)
+}
+
+func TestGetInfoAdvertisesS3(t *testing.T) {
+	p, _, _ := newTestProvisioner()
+
+	resp, err := p.DriverGetInfo(context.Background(), &cosi.DriverGetInfoRequest{})
+	if err != nil {
+		t.Fatalf("DriverGetInfo: %v", err)
+	}
+
+	// The sidecar refuses a claim asking for a protocol that is not in this list, so an
+	// empty one would make every claim fail with nothing in the driver's log.
+	protocols := resp.GetSupportedProtocols()
+	if len(protocols) != 1 || protocols[0].GetType() != cosi.ObjectProtocol_S3 {
+		t.Errorf("supported protocols = %v, want exactly [S3]", protocols)
 	}
 }

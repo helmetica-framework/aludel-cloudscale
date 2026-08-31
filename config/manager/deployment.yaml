@@ -56,11 +56,15 @@ spec:
         # Upstream COSI sidecar: watches Bucket/BucketAccess resources and
         # translates them into gRPC calls on the socket above.
         - name: objectstorage-provisioner-sidecar
-          # Built from the v0.2.2 commit, matching the controller image pinned
-          # in config/crd/kustomization.yaml. Upgrade both together.
-          image: gcr.io/k8s-staging-sig-storage/objectstorage-sidecar:v20251203-v0.2.1-103-gf75d475
+          # Built from the same commit as the CRDs and the controller pinned in
+          # config/crd/kustomization.yaml, and as the proto the driver is compiled
+          # against. Upgrade all of them together.
+          image: gcr.io/k8s-staging-sig-storage/objectstorage-sidecar:v20260814-controllerv0.2.0-rc1-320-gcc54469
           args:
-            - --v=5
+            # The v1alpha2 sidecar logs through controller-runtime's zap, not klog: the
+            # `--v=<n>` this used to pass is not a flag it defines any more, and an
+            # unknown flag makes it exit on startup rather than ignore it.
+            - --zap-log-level=debug
           env:
             - name: COSI_ENDPOINT
               value: unix:///var/lib/cosi/cosi.sock

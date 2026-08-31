@@ -12,17 +12,17 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - github.com/kubernetes-sigs/container-object-storage-interface?ref=v0.2.2
+# COSI serves v1alpha2 from main and has no tag carrying it, so this pins the revision
+# the driver's proto dependency is built against. Bump the two together, and keep the
+# sidecar in config/manager/deployment.yaml on the same commit.
+  - github.com/kubernetes-sigs/container-object-storage-interface?ref=cc544691e2ef7ddc2fba972d796ed3188ea46315
 
-# The upstream kustomization pins a controller image built five months before
-# the v0.2.2 tag, from a commit that still named buckets <bucketClassName><UID>.
-# PR #90 dropped the class name in favour of bucket-<UID>. Pin the image built
-# from the v0.2.2 commit itself so the deployed controller matches the source
-# this kustomization pulls, and keep it in step with the sidecar image in
-# config/manager/deployment.yaml.
+# The upstream kustomization pins whatever controller image was current when the commit
+# was made. Pin the one built from this very commit instead, so the deployed controller
+# matches the CRDs installed beside it.
 images:
   - name: gcr.io/k8s-staging-sig-storage/objectstorage-controller
-    newTag: v20251203-v0.2.1-103-gf75d475
+    newTag: v20260814-controllerv0.2.0-rc1-320-gcc54469
 
 patches:
   - target:
@@ -35,13 +35,13 @@ patches:
         value:
           - name: Ready
             type: boolean
-            jsonPath: .status.bucketReady
+            jsonPath: .status.readyToUse
           - name: Bucket ID
             type: string
             jsonPath: .status.bucketID
-          - name: Class
+          - name: Claim
             type: string
-            jsonPath: .spec.bucketClassName
+            jsonPath: .spec.bucketClaimRef.name
           - name: Driver
             type: string
             priority: 1
@@ -60,10 +60,10 @@ patches:
         value:
           - name: Ready
             type: boolean
-            jsonPath: .status.bucketReady
+            jsonPath: .status.readyToUse
           - name: Bucket
             type: string
-            jsonPath: .status.bucketName
+            jsonPath: .status.boundBucketName
           - name: Class
             type: string
             jsonPath: .spec.bucketClassName
@@ -79,18 +79,18 @@ patches:
       - op: add
         path: /spec/versions/0/additionalPrinterColumns
         value:
-          - name: Granted
+          - name: Ready
             type: boolean
-            jsonPath: .status.accessGranted
+            jsonPath: .status.readyToUse
           - name: Account ID
             type: string
             jsonPath: .status.accountID
           - name: Claim
             type: string
-            jsonPath: .spec.bucketClaimName
+            jsonPath: .spec.bucketClaims[0].bucketClaimName
           - name: Secret
             type: string
-            jsonPath: .spec.credentialsSecretName
+            jsonPath: .spec.bucketClaims[0].accessSecretName
           - name: Age
             type: date
             jsonPath: .metadata.creationTimestamp

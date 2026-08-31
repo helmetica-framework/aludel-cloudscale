@@ -2,13 +2,19 @@ module github.com/helmetica-framework/aludel-cloudscale
 
 go 1.26.4
 
+// The stdlib fixes govulncheck asks for are in 1.26.6, but the devcontainer ships an
+// older toolchain with GOTOOLCHAIN=local, where a `go` directive above the installed one
+// is a hard stop. A toolchain line is ignored in that mode and honoured everywhere else,
+// so local builds keep working while CI and the release build on 1.26.6.
+toolchain go1.26.6
+
 require (
 	github.com/cloudscale-ch/cloudscale-go-sdk/v6 v6.0.1
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/spf13/cobra v1.10.2
 	google.golang.org/grpc v1.83.0
-	sigs.k8s.io/container-object-storage-interface/proto v0.2.2
+	sigs.k8s.io/container-object-storage-interface/proto v0.0.0-20260806173055-cc544691e2ef
 )
 
 require (

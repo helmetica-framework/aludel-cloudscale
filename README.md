@@ -23,7 +23,7 @@ Two different secrets are involved, and they live in different places:
 | Secret | Namespace | Who creates it |
 | --- | --- | --- |
 | `aludel-cloudscale-credentials` (the API token) | `aludel-cloudscale-system`, with the Deployment | you, once per cluster |
-| `<credentialsSecretName>` (per-bucket S3 keys) | the **workload's** namespace, next to its `BucketAccess` | the COSI sidecar, per grant |
+| `<accessSecretName>` (per-bucket S3 keys) | the **workload's** namespace, next to its `BucketAccess` | the COSI sidecar, per grant |
 
 The token is a cluster-wide credential with full access to every bucket in the
 cloudscale.ch project, so it stays in the driver's namespace and is never
@@ -48,7 +48,9 @@ Deploying into a different namespace means overriding it in both places:
 | `bucketDeletionPolicy` | no | `DeleteIfEmpty` | `DeleteIfEmpty` refuses to drop a non-empty bucket; `DeleteAll` purges every object and version first |
 | `s3PathStyle` | no | `true` | Use path-style addressing instead of virtual-hosted |
 
-`BucketAccessClass` needs no parameters beyond `authenticationType: Key`.
+`BucketAccessClass` needs no parameters beyond `authenticationType: Key` and
+`multiBucketAccess: SingleBucket` — the credentials are the bucket owner's key pair, so an
+access spanning several buckets has nothing that could satisfy it and is refused.
 
 See `config/samples/bucketclass.yaml` for a full worked example.
 
@@ -67,8 +69,8 @@ deploys both containers together.
 
 ## Debugging
 
-`aludel-cloudscale selftest` runs `DriverCreateBucket` → `DriverGrantBucketAccess` →
-`DriverDeleteBucket` in-process against the real cloudscale.ch API, with no
+`aludel-cloudscale selftest` runs `DriverCreateBucket` → `DriverGetBucket` →
+`DriverGrantBucketAccess` → `DriverDeleteBucket` in-process against the real cloudscale.ch API, with no
 Kubernetes, sidecar or gRPC involved:
 
 ```console
@@ -160,9 +162,12 @@ A successful run leaves a `Bucket` whose `spec.bucketID` looks like
 `rma/bucket-<uuid>/<objectsUserID>`, and a Secret with the credentials:
 
 ```console
-kubectl get secret my-test-bucket-credentials \
-  -o jsonpath='{.data.BucketInfo}' | base64 -d | jq
+kubectl get secret my-test-bucket-credentials -o jsonpath='{.data}' | jq 'map_values(@base64d)'
 ```
+
+COSI writes one value per key — `COSI_S3_ENDPOINT`, `COSI_S3_REGION`,
+`COSI_S3_ACCESS_KEY_ID`, `COSI_S3_ACCESS_SECRET_KEY` and the rest — which is what lets a
+consumer reference a single key rather than parsing a document out of the secret.
 
 **6. Prove the credentials work** from inside the cluster:
 
@@ -230,17 +235,15 @@ The `Bucket ID` column is doing real work here: aludel-cloudscale encodes
 visible without going to the cloudscale.ch panel. `Driver` is `priority: 1`,
 so it only shows under `kubectl get -o wide`.
 
-**Status fields: not yours.** `BucketStatus` is exactly `bucketReady` and
-`bucketID`; `BucketClaimStatus` is `bucketReady` and `bucketName`;
-`BucketAccessStatus` is `accessGranted` and `accountID`. There are no
-conditions, no message field, and no extension point. The driver cannot
-contribute status either — `DriverCreateBucketResponse` returns only a bucket
-ID and a protocol, and the sidecar decides what to write. Adding a field means
-forking the CRD *and* the sidecar, and the fork would be overwritten by the
-next upstream install.
+**Status fields: not yours.** `BucketStatus` is `readyToUse`, `bucketID`, `protocols`,
+`bucketInfo` and `error`; `BucketClaimStatus` is `readyToUse`, `boundBucketName`,
+`protocols` and `error`. There are no conditions and no extension point. The driver cannot
+add one either — it answers with a bucket ID and the protocol info, and the sidecar decides
+what to write. Adding a field means forking the CRD *and* the sidecar, and the fork would
+be overwritten by the next upstream install.
 
-When you need to surface more than a boolean, use events instead — the sidecar
-copies the driver's gRPC error message verbatim onto the `BucketClaim`:
+v1alpha2 did add an `error` field to those statuses, which the sidecar fills from the
+driver's gRPC error — so a failure now reaches `kubectl get` as well as the events below:
 
 ```console
 kubectl describe bucketclaim <name>
@@ -270,10 +273,14 @@ one can be written.
 
 ## Status
 
-Pre-alpha, and so is COSI itself. This targets COSI **v1alpha1** as released in
-`sigs.k8s.io/container-object-storage-interface` v0.2.2. Upstream `main` is
-already on pre-alpha v1alpha2 with explicitly breaking API changes ahead; see
-the [v1alpha2 KEP](https://github.com/kubernetes/enhancements/pull/4599).
+Pre-alpha, and so is COSI itself. This targets COSI **v1alpha2**, which upstream serves
+only from `main` — there is no tag carrying it yet, so `config/crd`, the sidecar image in
+`config/manager` and the `proto` dependency are all pinned to one commit and have to be
+bumped together. See the
+[v1alpha2 KEP](https://github.com/kubernetes/enhancements/pull/4599).
+
+A cluster serves one COSI version: both versions ship the same CRD names with a single
+version each and no conversion webhook, so installing one replaces the other.
 
 ## Prior art
 
