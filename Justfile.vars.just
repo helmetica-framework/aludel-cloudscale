@@ -9,6 +9,6 @@ NAMESPACE := "aludel-cloudscale-system"
 
 # Local test cluster (athanor's kind cluster)
 # renovate: datasource=github-releases depName=kubernetes-sigs/kind
-KIND_VERSION := "v0.32.0"
+KIND_VERSION := "v0.33.0"
 KIND_CMD := "go run sigs.k8s.io/kind@" + KIND_VERSION
 KIND_CLUSTER := "athanor"
