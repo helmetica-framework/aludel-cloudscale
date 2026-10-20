@@ -150,6 +150,14 @@ func (b *fakeBuckets) Create(_ context.Context, name string) error {
 	return nil
 }
 
+func (b *fakeBuckets) Exists(_ context.Context, name string) (bool, error) {
+	b.store.mu.Lock()
+	defer b.store.mu.Unlock()
+
+	bucket, ok := b.store.buckets[name]
+	return ok && bucket.owner == b.accessKey, nil
+}
+
 func (b *fakeBuckets) Empty(_ context.Context, name string) error {
 	b.store.mu.Lock()
 	defer b.store.mu.Unlock()

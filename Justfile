@@ -24,9 +24,17 @@ vet:
     go vet ./...
 
 # All-in-one linting
-lint: fmt vet
+lint: fmt vet check-cosi-pins
     @echo 'Check for uncommitted changes ...'
     git diff --exit-code
+
+# Fail unless the COSI CRDs, controller, sidecar and proto are pinned to one upstream commit
+check-cosi-pins:
+    ./hack/cosi-pins.sh check
+
+# Move every COSI pin to one upstream commit (or branch head), together
+bump-cosi ref="main":
+    ./hack/cosi-pins.sh bump {{ ref }}
 
 # Build the docker image
 build-docker: build

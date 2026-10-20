@@ -12,17 +12,21 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - github.com/kubernetes-sigs/container-object-storage-interface?ref=v0.2.2
+  # COSI serves v1alpha2 only from main, with no release tag, so this pins one
+  # upstream commit. The CRDs, the controller and sidecar images and the proto
+  # Go module must all come from that same commit: never bump one of them on
+  # its own, run `just bump-cosi` instead. `just check-cosi-pins` (part of
+  # `just lint`) fails if they drift apart. See "Upgrading COSI" in the README.
+  # renovate-cosi: currentValue=main
+  - github.com/kubernetes-sigs/container-object-storage-interface?ref=274540c69400dc1e13278b149a4e073339cefde2
 
-# The upstream kustomization pins a controller image built five months before
-# the v0.2.2 tag, from a commit that still named buckets <bucketClassName><UID>.
-# PR #90 dropped the class name in favour of bucket-<UID>. Pin the image built
-# from the v0.2.2 commit itself so the deployed controller matches the source
-# this kustomization pulls, and keep it in step with the sidecar image in
-# config/manager/deployment.yaml.
+# The upstream kustomization pins whatever controller image was current when
+# the commit was made, usually one built from an earlier commit. Pin the image
+# built from the very same commit instead, so the deployed controller matches
+# the CRDs installed beside it.
 images:
   - name: gcr.io/k8s-staging-sig-storage/objectstorage-controller
-    newTag: v20251203-v0.2.1-103-gf75d475
+    newTag: v20261019-controllerv0.2.0-rc1-354-g274540c
 
 patches:
   - target:
@@ -35,17 +39,21 @@ patches:
         value:
           - name: Ready
             type: boolean
-            jsonPath: .status.bucketReady
+            jsonPath: .status.readyToUse
           - name: Bucket ID
             type: string
             jsonPath: .status.bucketID
-          - name: Class
+          - name: Claim
             type: string
-            jsonPath: .spec.bucketClassName
+            jsonPath: .spec.bucketClaimRef.name
           - name: Driver
             type: string
             priority: 1
             jsonPath: .spec.driverName
+          - name: Error
+            type: string
+            priority: 1
+            jsonPath: .status.error.message
           - name: Age
             type: date
             jsonPath: .metadata.creationTimestamp
@@ -60,13 +68,17 @@ patches:
         value:
           - name: Ready
             type: boolean
-            jsonPath: .status.bucketReady
+            jsonPath: .status.readyToUse
           - name: Bucket
             type: string
-            jsonPath: .status.bucketName
+            jsonPath: .status.boundBucketName
           - name: Class
             type: string
             jsonPath: .spec.bucketClassName
+          - name: Error
+            type: string
+            priority: 1
+            jsonPath: .status.error.message
           - name: Age
             type: date
             jsonPath: .metadata.creationTimestamp
@@ -79,18 +91,22 @@ patches:
       - op: add
         path: /spec/versions/0/additionalPrinterColumns
         value:
-          - name: Granted
+          - name: Ready
             type: boolean
-            jsonPath: .status.accessGranted
+            jsonPath: .status.readyToUse
           - name: Account ID
             type: string
             jsonPath: .status.accountID
           - name: Claim
             type: string
-            jsonPath: .spec.bucketClaimName
+            jsonPath: .spec.bucketClaims[0].bucketClaimName
           - name: Secret
             type: string
-            jsonPath: .spec.credentialsSecretName
+            jsonPath: .spec.bucketClaims[0].accessSecretName
+          - name: Error
+            type: string
+            priority: 1
+            jsonPath: .status.error.message
           - name: Age
             type: date
             jsonPath: .metadata.creationTimestamp

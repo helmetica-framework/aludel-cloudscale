@@ -1,0 +1,90 @@
+name: PR Image
+
+# Builds the container image for every pull request with the same goreleaser
+# config the release uses, so a broken Dockerfile or goreleaser config shows
+# up before a tag does. For pull requests from this repository it also pushes
+# the image to ghcr.io, so the change can be deployed to a test cluster:
+#
+#   ghcr.io/<repo>:pr-<number>             moves with every push to the PR
+#   ghcr.io/<repo>:pr-<number>-<sha>       one per commit
+#
+# Pull requests from forks only build: their GITHUB_TOKEN cannot write packages.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: pr-image-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # Required to push the PR image
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+      PUSH: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build snapshot images
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          args: release --snapshot --clean
+
+      - name: Login to ghcr.io
+        if: env.PUSH == 'true'
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push PR images
+        if: env.PUSH == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          image="$REGISTRY/$IMAGE_NAME"
+          tag="pr-$PR_NUMBER"
+
+          # goreleaser tags the snapshot images v<version>-snapshot-<arch>;
+          # retag them per PR so they never collide with release tags.
+          sources=()
+          while read -r name arch; do
+            docker tag "$name" "$image:$tag-$arch"
+            docker push "$image:$tag-$arch"
+            sources+=("$image:$tag-$arch")
+          done < <(jq -r '.[] | select(.type == "Docker Image") | "\(.name) \(.goarch)"' dist/artifacts.json)
+
+          docker buildx imagetools create \
+            --tag "$image:$tag" \
+            --tag "$image:$tag-${HEAD_SHA::7}" \
+            "${sources[@]}"
+
+          {
+            echo "### PR image"
+            echo
+            echo "\`$image:$tag-${HEAD_SHA::7}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

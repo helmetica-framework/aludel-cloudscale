@@ -18,6 +18,30 @@
       "minimumReleaseAge": "7 days",
       "prCreation": "not-pending",
       "internalChecksFilter": "strict"
+    },
+    {
+      "description": "COSI v1alpha2 has no release tag and is pinned to one upstream commit across the CRDs, controller image, sidecar image and proto module. Renovate must never move one of them alone; the cosi-upstream-commit dependency below proposes the bump instead.",
+      "matchPackageNames": [
+        "sigs.k8s.io/container-object-storage-interface/proto",
+        "gcr.io/k8s-staging-sig-storage/objectstorage-controller",
+        "gcr.io/k8s-staging-sig-storage/objectstorage-sidecar",
+        "kubernetes-sigs/container-object-storage-interface",
+        "github.com/kubernetes-sigs/container-object-storage-interface"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Weekly at most: upstream main moves often, and every bump needs a manual `just bump-cosi` plus testing.",
+      "matchDepNames": [
+        "cosi-upstream-commit"
+      ],
+      "schedule": [
+        "before 6am on monday"
+      ],
+      "commitMessageTopic": "COSI upstream commit",
+      "prBodyNotes": [
+        "Renovate only moves the `?ref=` in `config/crd/kustomization.yaml`; `just check-cosi-pins` fails on this PR until the rest follows. Check out the branch and run `just bump-cosi {{{newDigest}}}` to move the controller image, sidecar image and proto module to the same commit, then fix whatever the proto change broke and run `just test`. See \"Upgrading COSI\" in the README."
+      ]
     }
   ],
   "customManagers": [
@@ -41,6 +65,19 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[a-z-.]+?) depName=(?<depName>[^\\s]+?)\\n\\s*just-version: '(?<currentValue>[^']+)'"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Track the upstream COSI commit the v1alpha2 pins follow (see hack/cosi-pins.sh)",
+      "managerFilePatterns": [
+        "/^config/crd/kustomization\\.yaml$/"
+      ],
+      "matchStrings": [
+        "# renovate-cosi: currentValue=(?<currentValue>[^\\s]+)\\n\\s*- github\\.com/kubernetes-sigs/container-object-storage-interface\\?ref=(?<currentDigest>[0-9a-f]{40})"
+      ],
+      "depNameTemplate": "cosi-upstream-commit",
+      "packageNameTemplate": "https://github.com/kubernetes-sigs/container-object-storage-interface",
+      "datasourceTemplate": "git-refs"
     }
   ]
 }
