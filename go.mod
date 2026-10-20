@@ -8,7 +8,7 @@ require (
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/spf13/cobra v1.10.2
 	google.golang.org/grpc v1.83.0
-	sigs.k8s.io/container-object-storage-interface/proto v0.2.2
+	sigs.k8s.io/container-object-storage-interface/proto v0.0.0-20261019183510-274540c69400
 )
 
 require (
