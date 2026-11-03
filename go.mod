@@ -3,6 +3,7 @@ module github.com/helmetica-framework/aludel-cloudscale
 go 1.26.10
 
 require (
+	github.com/cloudscale-ch/cloudscale-go-sdk/v10 v10.1.1
 	github.com/cloudscale-ch/cloudscale-go-sdk/v6 v6.0.1
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.2.1
@@ -32,6 +33,6 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
 )
