@@ -98,6 +98,14 @@ func (b *Buckets) Create(ctx context.Context, name string) error {
 	return fmt.Errorf("MakeBucket: %w", err)
 }
 
+func (b *Buckets) Exists(ctx context.Context, name string) (bool, error) {
+	ok, err := b.client.BucketExists(ctx, name)
+	if err != nil {
+		return false, fmt.Errorf("BucketExists: %w", err)
+	}
+	return ok, nil
+}
+
 func (b *Buckets) Delete(ctx context.Context, name string) error {
 	err := b.client.RemoveBucket(ctx, name)
 	if err == nil {

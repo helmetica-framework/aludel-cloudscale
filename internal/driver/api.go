@@ -47,8 +47,9 @@ type ObjectsUser struct {
 type ObjectsUsers interface {
 	Create(ctx context.Context, displayName string, tags map[string]string) (*ObjectsUser, error)
 	Get(ctx context.Context, id string) (*ObjectsUser, error)
-	// FindByTags does a server-side tag-filtered list. Used to make
-	// DriverCreateBucket idempotent across retries.
+	// FindByTags does a server-side tag-filtered list. It is how the driver
+	// finds the objects user owning a bucket, both to make DriverCreateBucket
+	// idempotent across retries and to resolve a bucket ID on every later call.
 	FindByTags(ctx context.Context, tags map[string]string) ([]ObjectsUser, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -56,6 +57,9 @@ type ObjectsUsers interface {
 // Buckets is the S3 surface aludel-cloudscale needs, scoped to one set of credentials.
 type Buckets interface {
 	Create(ctx context.Context, name string) error
+	// Exists reports whether the bucket exists and is reachable with these
+	// credentials.
+	Exists(ctx context.Context, name string) (bool, error)
 	// Empty removes all objects (including non-current versions) from a bucket.
 	Empty(ctx context.Context, name string) error
 	// Delete removes the bucket. It returns ErrBucketNotEmpty if objects remain

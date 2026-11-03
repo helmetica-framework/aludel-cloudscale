@@ -1,22 +1,38 @@
 # RBAC for the COSI sidecar running next to aludel. The driver container itself
 # needs no Kubernetes access at all — it only talks to cloudscale.ch.
+#
+# Mirrors the +kubebuilder:rbac markers in upstream's sidecar/pkg/reconciler at
+# the commit pinned in config/crd/kustomization.yaml. The sidecar reads through
+# controller-runtime's cache, so every resource it gets also needs list and
+# watch, Secrets included.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: aludel-cloudscale-sidecar
 rules:
   - apiGroups: ["objectstorage.k8s.io"]
-    resources: ["buckets", "bucketaccesses", "bucketclaims", "bucketaccessclasses", "bucketclasses"]
-    verbs: ["get", "list", "watch", "update", "create", "delete"]
+    resources: ["buckets", "bucketaccesses"]
+    verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["objectstorage.k8s.io"]
-    resources: ["buckets/status", "bucketaccesses/status", "bucketclaims/status", "bucketaccessclasses/status"]
+    resources: ["buckets/status", "bucketaccesses/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["objectstorage.k8s.io"]
+    resources: ["buckets/finalizers", "bucketaccesses/finalizers"]
     verbs: ["update"]
+  # The per-BucketAccess credential secrets, written into the workload's
+  # namespace.
   - apiGroups: [""]
-    resources: ["secrets", "events"]
-    verbs: ["get", "delete", "update", "create"]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The v1alpha2 sidecar reports errors in status.error rather than as
+  # events; only leader election still records any.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
 ---
-# The sidecar runs leader election against a Lease named after the driver, in
-# its own namespace. Namespaced on purpose: nothing here needs cluster scope.
+# Leader election is off by default in the v1alpha2 sidecar (--leader-elect).
+# Kept so that turning it on for more than one replica needs no RBAC change.
+# Namespaced on purpose: the Lease lives next to the Deployment.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

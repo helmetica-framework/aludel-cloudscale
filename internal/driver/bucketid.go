@@ -5,34 +5,34 @@ import (
 	"strings"
 )
 
-// BucketID is the opaque identifier aludel-cloudscale returns from DriverCreateBucket and
-// receives back on every later call. COSI stores it verbatim on the Bucket
-// resource, so it has to carry everything needed to act on the bucket later.
+// BucketID is the opaque identifier aludel-cloudscale returns from
+// DriverGenerateBucketId and receives back on every later call. COSI stores it
+// verbatim on the Bucket resource, so it has to carry everything needed to act
+// on the bucket later.
 //
-// Because a cloudscale.ch objects user can only reach the buckets it created
-// itself, the owning user's ID is part of the identity of the bucket and is
-// encoded here rather than looked up.
+// COSI v1alpha2 provisions in two phases and persists the ID before
+// DriverCreateBucket runs, so the ID cannot contain anything that only exists
+// once the bucket does. In particular the owning objects user's ID is not
+// part of it: the user is found again through the tags set on it at creation.
 type BucketID struct {
 	// Region is the cloudscale.ch region slug, e.g. "rma" or "lpg".
 	Region string
 	// Bucket is the S3 bucket name.
 	Bucket string
-	// UserID is the cloudscale.ch objects user that owns the bucket.
-	UserID string
 }
 
 func (b BucketID) String() string {
-	return strings.Join([]string{b.Region, b.Bucket, b.UserID}, "/")
+	return b.Region + "/" + b.Bucket
 }
 
 // ParseBucketID reverses BucketID.String.
 func ParseBucketID(s string) (BucketID, error) {
 	parts := strings.Split(s, "/")
-	if len(parts) != 3 {
-		return BucketID{}, fmt.Errorf("malformed bucket id %q: expected <region>/<bucket>/<objectsUserID>", s)
+	if len(parts) != 2 {
+		return BucketID{}, fmt.Errorf("malformed bucket id %q: expected <region>/<bucket>", s)
 	}
-	id := BucketID{Region: parts[0], Bucket: parts[1], UserID: parts[2]}
-	if id.Region == "" || id.Bucket == "" || id.UserID == "" {
+	id := BucketID{Region: parts[0], Bucket: parts[1]}
+	if id.Region == "" || id.Bucket == "" {
 		return BucketID{}, fmt.Errorf("malformed bucket id %q: empty component", s)
 	}
 	return id, nil

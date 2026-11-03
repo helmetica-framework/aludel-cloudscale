@@ -1,0 +1,29 @@
+# Proves the credentials COSI wrote for my-test-bucket-access work: mounts the
+# Secret as environment variables, then writes, reads back and deletes one
+# object. Expects the resources from bucketclass.yaml to be ready.
+#
+#   kubectl apply -f config/samples/s3-check.yaml
+#   kubectl logs -f s3-check   # prints "hello"
+#   kubectl delete -f config/samples/s3-check.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: s3-check
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+    - name: aws
+      image: amazon/aws-cli:latest
+      envFrom:
+        - secretRef:
+            name: my-test-bucket-credentials
+      command: ["sh", "-ec"]
+      args:
+        - |
+          export AWS_ACCESS_KEY_ID="$COSI_S3_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$COSI_S3_ACCESS_SECRET_KEY"
+          s3="aws --endpoint-url $COSI_S3_ENDPOINT --region $COSI_S3_REGION s3"
+          echo hello | $s3 cp - "s3://$COSI_S3_BUCKET_ID/hello.txt"
+          $s3 cp "s3://$COSI_S3_BUCKET_ID/hello.txt" -
+          $s3 rm "s3://$COSI_S3_BUCKET_ID/hello.txt"

@@ -30,8 +30,9 @@ var (
 var selftestCmd = &cobra.Command{
 	Use:   "selftest",
 	Short: "Provision, grant and delete a throwaway bucket against the real API",
-	Long: `selftest exercises DriverCreateBucket, DriverGrantBucketAccess and
-DriverDeleteBucket end to end without Kubernetes.
+	Long: `selftest exercises DriverGenerateBucketId, DriverCreateBucket,
+DriverGetBucket, DriverGrantBucketAccess and DriverDeleteBucket end to end
+without Kubernetes.
 
 It creates a REAL objects user and a REAL bucket in your cloudscale.ch project
 and deletes both again unless --keep is given.`,
@@ -59,11 +60,11 @@ and deletes both again unless --keep is given.`,
 		}
 
 		ctx := cmd.Context()
-		// A bare UUID, like the names the COSI controller generates. Bucket
+		// "bc-<uuid>", like the names the COSI controller generates. Bucket
 		// names are unique across all of cloudscale.ch, so the name has to
 		// carry no meaning; anything left behind is identified by the
 		// objects user's tags instead.
-		name := uuid.NewString()
+		name := "bc-" + uuid.NewString()
 		params := map[string]string{
 			driver.ParamRegion:         flagSelftestRegion,
 			driver.ParamDeletionPolicy: string(driver.DeleteAll),
@@ -73,29 +74,64 @@ and deletes both again unless --keep is given.`,
 			params[driver.ParamEndpointURL] = flagSelftestEndpoint
 		}
 
-		step(1, "DriverCreateBucket", "name=%s region=%s endpoint=%s pathStyle=%t",
-			name, flagSelftestRegion, endpointOf(params), flagSelftestPathStyle)
-		created, err := p.DriverCreateBucket(ctx, &cosi.DriverCreateBucketRequest{
+		s3 := []*cosi.ObjectProtocol{{Type: cosi.ObjectProtocol_S3}}
+
+		step(1, "DriverGenerateBucketId", "name=%s region=%s", name, flagSelftestRegion)
+		generated, err := p.DriverGenerateBucketId(ctx, &cosi.DriverGenerateBucketIdRequest{
 			Name:       name,
+			Protocols:  s3,
 			Parameters: params,
 		})
 		if err != nil {
+			return fmt.Errorf("DriverGenerateBucketId failed: %w", err)
+		}
+		bucketID := generated.GetBucketId()
+		fmt.Printf("    ok  bucketID=%s\n", bucketID)
+
+		step(2, "DriverCreateBucket", "bucketID=%s endpoint=%s pathStyle=%t",
+			bucketID, endpointOf(params), flagSelftestPathStyle)
+		if _, err := p.DriverCreateBucket(ctx, &cosi.DriverCreateBucketRequest{
+			BucketId:   bucketID,
+			Protocols:  s3,
+			Parameters: params,
+		}); err != nil {
 			return fmt.Errorf("DriverCreateBucket failed: %w", err)
 		}
-		fmt.Printf("    ok  bucketID=%s\n", created.GetBucketId())
+		fmt.Printf("    ok\n")
 
-		step(2, "DriverGrantBucketAccess", "authenticationType=Key")
+		step(3, "DriverGetBucket", "bucketID=%s", bucketID)
+		got, err := p.DriverGetBucket(ctx, &cosi.DriverGetBucketRequest{
+			BucketId:   bucketID,
+			Protocols:  s3,
+			Parameters: params,
+		})
+		if err != nil {
+			return fmt.Errorf("DriverGetBucket failed: %w", err)
+		}
+		fmt.Printf("    ok  bucket=%s endpoint=%s\n",
+			got.GetProtocols().GetS3().GetBucketId(), got.GetProtocols().GetS3().GetEndpoint())
+
+		step(4, "DriverGrantBucketAccess", "authenticationType=Key accessModes=ReadWrite")
+		readWrite := &cosi.AccessMode{Mode: cosi.AccessMode_READ_WRITE}
 		granted, err := p.DriverGrantBucketAccess(ctx, &cosi.DriverGrantBucketAccessRequest{
-			BucketId:           created.GetBucketId(),
-			Name:               "selftest-access",
-			AuthenticationType: cosi.AuthenticationType_Key,
+			AccountName:        "ba-selftest",
+			Protocol:           s3[0],
+			AuthenticationType: &cosi.AuthenticationType{Type: cosi.AuthenticationType_KEY},
+			Parameters:         params,
+			Buckets: []*cosi.DriverGrantBucketAccessRequest_AccessedBucket{{
+				BucketId:                 bucketID,
+				ObjectDataAccessMode:     readWrite,
+				ObjectMetadataAccessMode: readWrite,
+				BucketMetadataAccessMode: readWrite,
+			}},
 		})
 		if err != nil {
 			return fmt.Errorf("DriverGrantBucketAccess failed: %w", err)
 		}
-		secrets := granted.GetCredentials()["s3"].GetSecrets()
+		info := granted.GetBuckets()[0].GetBucketInfo().GetS3()
 		fmt.Printf("    ok  accountID=%s accessKeyID=%s endpoint=%s region=%s\n",
-			granted.GetAccountId(), secrets["accessKeyID"], secrets["endpoint"], secrets["region"])
+			granted.GetAccountId(), granted.GetCredentials().GetS3().GetAccessKeyId(),
+			info.GetEndpoint(), info.GetRegion())
 
 		if flagSelftestKeep {
 			fmt.Printf("\n--keep given: leaving bucket %q and its objects user in place.\n", name)
@@ -103,16 +139,16 @@ and deletes both again unless --keep is given.`,
 			return nil
 		}
 
-		step(3, "DriverDeleteBucket", "bucketDeletionPolicy=DeleteAll")
+		step(5, "DriverDeleteBucket", "bucketDeletionPolicy=DeleteAll")
 		if _, err := p.DriverDeleteBucket(ctx, &cosi.DriverDeleteBucketRequest{
-			BucketId:      created.GetBucketId(),
-			DeleteContext: params,
+			BucketId:   bucketID,
+			Parameters: params,
 		}); err != nil {
 			return fmt.Errorf("DriverDeleteBucket failed: %w", err)
 		}
 		fmt.Printf("    ok  bucket and objects user removed\n")
 
-		fmt.Printf("\nAll three RPCs succeeded. The cloudscale.ch and S3 paths work;\n")
+		fmt.Printf("\nAll five RPCs succeeded. The cloudscale.ch and S3 paths work;\n")
 		fmt.Printf("if the driver still misbehaves in-cluster the problem is in the COSI wiring.\n")
 		return nil
 	},

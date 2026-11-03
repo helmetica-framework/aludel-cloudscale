@@ -9,6 +9,10 @@ Kubernetes workload ask for an S3 bucket with a `BucketClaim` and receive
 credentials in a Secret, without anybody touching the cloudscale.ch control
 panel.
 
+It implements COSI **v1alpha2**, pinned to upstream commit
+[`274540c`](https://github.com/kubernetes-sigs/container-object-storage-interface/commit/274540c69400dc1e13278b149a4e073339cefde2)
+(2026-10-19). See [Status](#status) and [Upgrading COSI](#upgrading-cosi).
+
 ## Configuration
 
 The driver needs a **read-write** cloudscale.ch API token in
@@ -48,7 +52,56 @@ Deploying into a different namespace means overriding it in both places:
 | `bucketDeletionPolicy` | no | `DeleteIfEmpty` | `DeleteIfEmpty` refuses to drop a non-empty bucket; `DeleteAll` purges every object and version first |
 | `s3PathStyle` | no | `true` | Use path-style addressing instead of virtual-hosted |
 
-`BucketAccessClass` needs no parameters beyond `authenticationType: Key`.
+`BucketAccessClass` needs nothing beyond `authenticationType: Key` and
+`multiBucketAccess: SingleBucket` (the default). Its parameters, if any, are
+parsed the same way, so `endpointURL` and `s3PathStyle` have to be repeated
+there if the BucketClass overrides them: they are what ends up in the
+credentials secret.
+
+### What a BucketAccess can ask for
+
+cloudscale.ch has no IAM and no bucket policies, so the only credential that
+can reach a bucket is the key pair of the objects user that created it. That
+shapes what aludel-cloudscale accepts:
+
+| BucketAccess / class field | Accepted | Otherwise |
+| --- | --- | --- |
+| `authenticationType` | `Key` | `ServiceAccount` → `Unimplemented` |
+| `protocol` | `S3` | `InvalidArgument` |
+| `bucketClaims` | exactly one | more than one → `OutOfRange`, which the sidecar reports as "driver does not support multi-bucket access" |
+| `accessModes.objectData`, `.objectMetadata`, `.bucketMetadata` | `ReadWrite`, or unset | `ReadOnly` / `WriteOnly` → `InvalidArgument`: the owner's key pair is always full access, and handing it out for a narrower request would over-grant |
+
+Every `BucketAccess` on the same bucket gets the same key pair, and revoking
+access is a no-op: rotating the owner's key would cut off every other
+`BucketAccess` too. Access ends when the bucket is deleted.
+
+The sidecar writes the credentials into the `accessSecretName` Secret in the
+workload's namespace, one key per value:
+
+| Key | Value |
+| --- | --- |
+| `COSI_S3_BUCKET_ID` | bucket name, `bc-<BucketClaim UID>` |
+| `COSI_S3_ENDPOINT` | `https://objects.<region>.cloudscale.ch`, or `endpointURL` |
+| `COSI_S3_REGION` | the region slug |
+| `COSI_S3_ADDRESSING_STYLE` | `Path`, or `Virtual` with `s3PathStyle: "false"` |
+| `COSI_S3_ACCESS_KEY_ID` | the owning objects user's access key |
+| `COSI_S3_ACCESS_SECRET_KEY` | its secret key |
+
+### Deleting buckets
+
+With `deletionPolicy: Delete` on the BucketClass, deleting a `BucketClaim`
+deletes its `Bucket`, and the driver then deletes the S3 bucket followed by
+its objects user. `bucketDeletionPolicy` decides what happens to a bucket that
+still holds objects:
+
+- `DeleteAll` empties it (every object and version) and deletes it.
+- `DeleteIfEmpty` refuses with `FailedPrecondition`. The sidecar treats that
+  as retryable, so the `BucketClaim` stays in deletion, with the reason in the
+  `Bucket`'s `status.error`, until somebody empties the bucket. The next retry
+  then deletes the bucket and the objects user, and the claim goes away. A
+  Bucket's parameters are immutable, so emptying it is the only way forward.
+
+`deletionPolicy: Retain` leaves both the bucket and the objects user alone.
 
 See `config/samples/bucketclass.yaml` for a full worked example.
 
@@ -61,14 +114,24 @@ just build-docker # container image
 just install      # apply config/rbac and config/manager
 ```
 
+Every pull request from this repository also gets an image on ghcr.io,
+`ghcr.io/helmetica-framework/aludel-cloudscale:pr-<number>` (latest push) and
+`:pr-<number>-<sha>` (one per commit), for trying a change on a test cluster
+before it is released:
+
+```console
+cd config/manager
+kustomize edit set image ghcr.io/helmetica-framework/aludel-cloudscale=ghcr.io/helmetica-framework/aludel-cloudscale:pr-<number>-<sha>
+```
+
 The driver serves gRPC on a unix socket shared with the upstream COSI sidecar,
 which is what actually watches the Kubernetes resources. `config/manager`
 deploys both containers together.
 
 ## Debugging
 
-`aludel-cloudscale selftest` runs `DriverCreateBucket` → `DriverGrantBucketAccess` →
-`DriverDeleteBucket` in-process against the real cloudscale.ch API, with no
+`aludel-cloudscale selftest` runs `DriverGenerateBucketId` → `DriverCreateBucket` →
+`DriverGetBucket` → `DriverGrantBucketAccess` → `DriverDeleteBucket` in-process against the real cloudscale.ch API, with no
 Kubernetes, sidecar or gRPC involved:
 
 ```console
@@ -85,20 +148,39 @@ underlying API error.
 `--path-style=false` switches to virtual-hosted addressing.
 
 Note that the COSI controller does **not** name the bucket after your
-`BucketClaim`. From `controller/pkg/bucketclaim/bucketclaim.go`:
+`BucketClaim`. From `controller/pkg/reconciler/bucketclaim.go`:
 
 ```go
-bucketName = fmt.Sprintf("bucket-%s", bucketClaim.ObjectMeta.UID)
+name = "bc-" + string(claim.UID) // DO NOT CHANGE UNLESS ABSOLUTELY NECESSARY
 ```
 
 The driver uses that name verbatim, so the bucket and its objects user are also
-called `bucket-<uuid>`: one name identifies them in `kubectl`, in the logs and
-in the cloudscale.ch control panel. Looking for the claim's name in the panel
+called `bc-<uuid>`: one name identifies them in `kubectl`, in the logs and in
+the cloudscale.ch control panel. Looking for the claim's name in the panel
 will not find anything.
 
-This is why `config/crd` pins the controller image as well as the manifests.
-The upstream kustomization ships an image predating PR #90, which named buckets
-`<bucketClassName><UID>` instead.
+## How provisioning works
+
+COSI v1alpha2 provisions a bucket in two phases, and records the bucket ID on
+the `Bucket` before anything exists in the backend:
+
+1. **`DriverGenerateBucketId`** turns the suggested name and the BucketClass
+   `region` into the ID `<region>/<bucket>`, e.g. `lpg/bc-6819c4e4-…`. It
+   creates nothing, as the spec requires: COSI may drop the `Bucket` after
+   this phase without ever calling `DriverDeleteBucket`.
+2. **`DriverCreateBucket`** creates the objects user, tagged with the bucket
+   name, and then the bucket with that user's own credentials.
+
+Because the ID is fixed before the objects user exists, it cannot contain the
+user's ID (v1alpha1 IDs were `<region>/<bucket>/<objectsUserID>`). Every later
+call finds the owner through its tags instead (see
+[Idempotency and orphans](#idempotency-and-orphans)), and the user's ID shows
+up as the `BucketAccess`'s `status.accountID`.
+
+`DriverGetBucket` serves statically provisioned Buckets. Set
+`spec.existingBucketID` to `<region>/<bucket>`; the call succeeds only if an
+objects user tagged by this driver owns that bucket and can see it, since
+without one the driver could neither grant access nor delete it.
 
 ## Trying it on the athanor kind cluster
 
@@ -156,25 +238,34 @@ kubectl get bucketclaims,buckets
 kubectl -n aludel-cloudscale-system logs deployment/aludel-cloudscale -c aludel-cloudscale -f
 ```
 
-A successful run leaves a `Bucket` whose `spec.bucketID` looks like
-`rma/bucket-<uuid>/<objectsUserID>`, and a Secret with the credentials:
+A successful run leaves `Bucket` and `BucketClaim` with `READY true`, a bucket
+ID like `lpg/bc-<uuid>`, a `BucketAccess` with `READY true` and the objects
+user's ID as `ACCOUNT ID`, and a Secret with the credentials:
 
 ```console
-kubectl get secret my-test-bucket-credentials \
-  -o jsonpath='{.data.BucketInfo}' | base64 -d | jq
+kubectl get secret my-test-bucket-credentials -o json \
+  | jq '.data | map_values(@base64d)'
 ```
+
+If anything is stuck, `kubectl get buckets,bucketclaims,bucketaccesses -A -o wide`
+adds an `ERROR` column with the last error from the driver or the controller.
 
 **6. Prove the credentials work** from inside the cluster:
 
 ```console
-kubectl run s3 --rm -it --restart=Never --image=amazon/aws-cli:latest \
-  --env=AWS_ACCESS_KEY_ID=<accessKeyID from the secret> \
-  --env=AWS_SECRET_ACCESS_KEY=<accessSecretKey from the secret> \
-  -- --endpoint-url https://objects.rma.cloudscale.ch s3 ls
+kubectl apply -f config/samples/s3-check.yaml
+kubectl logs -f s3-check   # prints "hello"
+kubectl delete -f config/samples/s3-check.yaml
 ```
 
+`s3-check.yaml` mounts the Secret as environment variables and writes, reads
+and deletes an object with them.
+
 **7. Clean up** — deleting the `BucketClaim` removes the bucket *and* its
-objects user, because the sample `BucketClass` sets `deletionPolicy: Delete`:
+objects user, because the sample `BucketClass` sets `deletionPolicy: Delete`.
+It uses `bucketDeletionPolicy: DeleteIfEmpty`, so delete any objects you left
+in the bucket first, or the claim waits until you do (see
+[Deleting buckets](#deleting-buckets)):
 
 ```console
 kubectl delete -f config/samples/bucketclass.yaml
@@ -221,34 +312,26 @@ upstream already populates:
 
 ```console
 $ kubectl get buckets
-NAME            READY   BUCKET ID                          CLASS            AGE
-bucket-8f2a..   true    lpg/bucket-8f2a…/1228191ff5215a…   cloudscale-lpg   2m
+NAME          READY   BUCKET ID         CLAIM            AGE
+bc-8f2a…      true    lpg/bc-8f2a…      my-test-bucket   2m
 ```
 
-The `Bucket ID` column is doing real work here: aludel-cloudscale encodes
-`<region>/<bucket>/<objectsUserID>` into it, so the owning objects user is
-visible without going to the cloudscale.ch panel. `Driver` is `priority: 1`,
-so it only shows under `kubectl get -o wide`.
+`Driver` and `Error` are `priority: 1`, so they only show under
+`kubectl get -o wide`.
 
-**Status fields: not yours.** `BucketStatus` is exactly `bucketReady` and
-`bucketID`; `BucketClaimStatus` is `bucketReady` and `bucketName`;
-`BucketAccessStatus` is `accessGranted` and `accountID`. There are no
-conditions, no message field, and no extension point. The driver cannot
-contribute status either — `DriverCreateBucketResponse` returns only a bucket
-ID and a protocol, and the sidecar decides what to write. Adding a field means
-forking the CRD *and* the sidecar, and the fork would be overwritten by the
-next upstream install.
-
-When you need to surface more than a boolean, use events instead — the sidecar
-copies the driver's gRPC error message verbatim onto the `BucketClaim`:
+**Status fields: not yours.** The status of every COSI resource is written by
+the controller and the sidecar, not the driver: `readyToUse`, the IDs, the
+protocols and bucket info, and `error`. The driver's only say is the content
+of its gRPC responses, and the message of any gRPC error it returns, which the
+sidecar copies verbatim into `status.error.message`:
 
 ```console
-kubectl describe bucketclaim <name>
-kubectl get events --field-selector involvedObject.kind=BucketClaim
+kubectl get bucket <name> -o jsonpath='{.status.error.message}'
 ```
 
-That is why aludel-cloudscale's error strings name the bucket, the region and the failing
-operation: the event is the only place a human sees them.
+That is why aludel-cloudscale's error strings name the bucket, the region and
+the failing operation: that field is the only place a human sees them. The
+v1alpha2 sidecar no longer emits events for them.
 
 ## Idempotency and orphans
 
@@ -262,7 +345,9 @@ aludel_bucket=<bucket name>
 
 `DriverCreateBucket` does a server-side tag-filtered list first and adopts an
 existing user if it finds one. If the S3 call failed on a previous attempt the
-user survives and gets reused.
+user survives and gets reused. The same lookup is how `DriverGetBucket`,
+`DriverGrantBucketAccess` and `DriverDeleteBucket` find a bucket's owner, and
+if two users carry the tags of one bucket they all refuse to guess.
 
 A user is only genuinely orphaned if the `BucketClaim` is abandoned between the
 two steps. There is no garbage collector for that yet — the tags are there so
@@ -270,10 +355,57 @@ one can be written.
 
 ## Status
 
-Pre-alpha, and so is COSI itself. This targets COSI **v1alpha1** as released in
-`sigs.k8s.io/container-object-storage-interface` v0.2.2. Upstream `main` is
-already on pre-alpha v1alpha2 with explicitly breaking API changes ahead; see
-the [v1alpha2 KEP](https://github.com/kubernetes/enhancements/pull/4599).
+Pre-alpha, and so is COSI itself. This targets COSI **v1alpha2**, which
+upstream serves only from `main`, with no release tag. Everything COSI is
+therefore pinned to one upstream commit:
+
+**[`274540c69400dc1e13278b149a4e073339cefde2`](https://github.com/kubernetes-sigs/container-object-storage-interface/commit/274540c69400dc1e13278b149a4e073339cefde2)**
+(merge of PR #394, 2026-10-19)
+
+| What | Where | Pin |
+| --- | --- | --- |
+| CRDs and controller manifests | `config/crd/kustomization.yaml` | `?ref=274540c…` |
+| Controller image | `config/crd/kustomization.yaml` | `objectstorage-controller:v20261019-controllerv0.2.0-rc1-354-g274540c` |
+| Sidecar image | `config/manager/deployment.yaml` | `objectstorage-sidecar:v20261019-controllerv0.2.0-rc1-354-g274540c` |
+| Proto Go module | `go.mod` | `sigs.k8s.io/container-object-storage-interface/proto v0.0.0-20261019183510-274540c69400` |
+
+All four have to come from the same commit: the CRDs, the sidecar and the gRPC
+API change together, and upstream `main` still makes breaking changes to all
+of them. v1alpha1 (COSI v0.2.2) is not supported any more, and existing
+v1alpha1 resources are not converted.
+
+## Upgrading COSI
+
+Never bump one of the four pins on its own. Instead:
+
+```console
+just bump-cosi            # upstream main
+just bump-cosi <commit>   # or a specific commit
+```
+
+`hack/cosi-pins.sh` resolves the commit, looks up the controller and sidecar
+images built from it in `gcr.io/k8s-staging-sig-storage` (upstream builds them
+after merge, so a brand new commit may not have any yet), and moves all four
+pins. Then:
+
+1. `go build ./... && just test`. Upstream changes the proto freely: read the
+   diff of `proto/cosi.proto` between the old and the new commit and adapt
+   `internal/driver`. `TestEveryRPCIsImplemented` fails if a new RPC appeared
+   that the driver does not implement yet.
+2. Check `sidecar/pkg/reconciler` for new `+kubebuilder:rbac` markers and
+   mirror them in `config/rbac/role.yaml`, and the CRDs for renamed fields
+   that the printer columns in `config/crd/kustomization.yaml` read.
+3. Update `config/samples`, and the commit and table in [Status](#status).
+4. Run the athanor kind walkthrough above end to end.
+
+`just check-cosi-pins` (part of `just lint`, so CI runs it) fails whenever the
+four pins disagree.
+
+Renovate is told to leave all four alone. Instead it tracks upstream `main`
+as a single `cosi-upstream-commit` dependency and opens a PR at most weekly
+that moves only the `?ref=`. That PR fails `just check-cosi-pins` on purpose:
+it is the reminder. Check out its branch, run `just bump-cosi <commit>`, and
+carry on with the steps above.
 
 ## Prior art
 
