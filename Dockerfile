@@ -1,4 +1,4 @@
-FROM gcr.io/distroless/static:nonroot@sha256:963fa6c544fe5ce420f1f54fb88b6fb01479f054c8056d0f74cc2c6000df5240
+FROM gcr.io/distroless/static:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 
 ENTRYPOINT ["/usr/bin/aludel-cloudscale"]
 COPY aludel-cloudscale /usr/bin/
