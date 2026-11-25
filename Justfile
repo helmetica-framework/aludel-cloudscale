@@ -60,3 +60,11 @@ deploy-kind: build-docker
 # Clean up the generated resources
 clean:
     rm -rf dist/ cover.out {{ bin_filename }} || true
+
+# Build the docs as they appear on docs.helmetica.io; fails on warnings
+docs:
+    GOTOOLCHAIN=auto GOEXPERIMENT=jsonv2 go run github.com/helmetica-framework/rosarium@v0.1.0 preview .
+
+# Build the docs and serve them on http://localhost:2020
+docs-serve:
+    GOTOOLCHAIN=auto GOEXPERIMENT=jsonv2 go run github.com/helmetica-framework/rosarium@v0.1.0 preview . --serve :2020

@@ -1,0 +1,24 @@
+= cloudscale.ch behaviours worth knowing
+
+Two API characteristics are not obvious from the documentation and both cost a
+debugging session:
+
+*At most one `tag:` clause per request.* Filtering a list by two tags returns
+`400 At most one tag: clause can be passed`. `FindByTags` therefore pushes a
+single tag down to the API and applies the rest client-side. The client-side
+pass is not cosmetic: a list narrowed only by `aludel_bucket` can match users
+tagged by a different driver, and adopting one would hand out credentials that
+cannot read the bucket.
+
+*Key pairs propagate asynchronously.* A key returned by
+`POST /v1/objects-users` is not immediately valid at the S3 endpoint; the first
+`CreateBucket` can fail with `403 InvalidAccessKeyId` before it settles.
+`DriverCreateBucket` retries on exactly that error with exponential backoff
+(500ms → 4s, 30s budget) and gives up with `Unavailable` so the sidecar retries
+the RPC rather than failing the claim. Every other S3 error still fails on the
+first attempt.
+
+*Objects users are not region-scoped.* The same user works against both
+`objects.rma.cloudscale.ch` and `objects.lpg.cloudscale.ch`, even though the
+two regions are separate storage infrastructures and cross-region requests to
+an existing bucket get a `301`. Verified with `aludel-cloudscale selftest` against both.

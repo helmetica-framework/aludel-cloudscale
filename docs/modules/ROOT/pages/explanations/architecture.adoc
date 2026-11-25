@@ -1,0 +1,22 @@
+= How provisioning works
+
+COSI v1alpha2 provisions a bucket in two phases, and records the bucket ID on
+the `Bucket` before anything exists in the backend:
+
+. *`DriverGenerateBucketId`* turns the suggested name and the BucketClass
+   `region` into the ID `<region>/<bucket>`, e.g. `lpg/bc-6819c4e4-…`. It
+   creates nothing, as the spec requires: COSI may drop the `Bucket` after
+   this phase without ever calling `DriverDeleteBucket`.
+. *`DriverCreateBucket`* creates the objects user, tagged with the bucket
+   name, and then the bucket with that user's own credentials.
+
+Because the ID is fixed before the objects user exists, it cannot contain the
+user's ID (v1alpha1 IDs were `<region>/<bucket>/<objectsUserID>`). Every later
+call finds the owner through its tags instead (see
+Idempotency and orphans), and the user's ID shows
+up as the `BucketAccess`'s `status.accountID`.
+
+`DriverGetBucket` serves statically provisioned Buckets. Set
+`spec.existingBucketID` to `<region>/<bucket>`; the call succeeds only if an
+objects user tagged by this driver owns that bucket and can see it, since
+without one the driver could neither grant access nor delete it.

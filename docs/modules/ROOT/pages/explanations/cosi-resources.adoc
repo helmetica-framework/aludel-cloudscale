@@ -1,0 +1,35 @@
+= What you can and cannot add to the COSI resources
+
+The `Bucket`, `BucketClaim` and `BucketAccess` APIs belong to upstream COSI, not
+to this driver, which puts a hard line through the middle of this question.
+
+*Printer columns: yours to change.* `additionalPrinterColumns` lives on the
+CRD, not in the API types, so `config/crd` patches them onto the upstream CRDs
+during install. Upstream ships none at all, which is why a bare
+`kubectl get buckets` shows only NAME and AGE. Every column reads a field
+upstream already populates:
+
+[source,console]
+----
+$ kubectl get buckets
+NAME          READY   BUCKET ID         CLAIM            AGE
+bc-8f2a…      true    lpg/bc-8f2a…      my-test-bucket   2m
+----
+
+`Driver` and `Error` are `priority: 1`, so they only show under
+`kubectl get -o wide`.
+
+*Status fields: not yours.* The status of every COSI resource is written by
+the controller and the sidecar, not the driver: `readyToUse`, the IDs, the
+protocols and bucket info, and `error`. The driver's only say is the content
+of its gRPC responses, and the message of any gRPC error it returns, which the
+sidecar copies verbatim into `status.error.message`:
+
+[source,console]
+----
+kubectl get bucket <name> -o jsonpath='{.status.error.message}'
+----
+
+That is why aludel-cloudscale's error strings name the bucket, the region and
+the failing operation: that field is the only place a human sees them. The
+v1alpha2 sidecar no longer emits events for them.

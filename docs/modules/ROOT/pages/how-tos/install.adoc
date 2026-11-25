@@ -1,0 +1,24 @@
+= Install and run
+
+[source,console]
+----
+just build        # build the binary
+just test         # unit tests
+just build-docker # container image
+just install      # apply config/rbac and config/manager
+----
+
+Every pull request from this repository also gets an image on ghcr.io,
+`ghcr.io/helmetica-framework/aludel-cloudscale:pr-<number>` (latest push) and
+`:pr-<number>-<sha>` (one per commit), for trying a change on a test cluster
+before it is released:
+
+[source,console]
+----
+cd config/manager
+kustomize edit set image ghcr.io/helmetica-framework/aludel-cloudscale=ghcr.io/helmetica-framework/aludel-cloudscale:pr-<number>-<sha>
+----
+
+The driver serves gRPC on a unix socket shared with the upstream COSI sidecar,
+which is what actually watches the Kubernetes resources. `config/manager`
+deploys both containers together.

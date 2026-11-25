@@ -1,0 +1,100 @@
+= Try it on athanor
+
+_*This talks to the real cloudscale.ch API.* There is no emulator: every_
+_`BucketClaim` you create here provisions a real objects user and a real,_
+_billed bucket in your cloudscale.ch project. Use a throwaway project, and_
+_delete your claims when you are done._
+
+From the athanor devcontainer, with the cluster already up (`just ignite`):
+
+[source,console]
+----
+export KUBECONFIG=/workspaces/athanor/.kind/kind-config
+mkdir /workspaces/athanor/reagents
+cd /workspaces/athanor/reagents
+git clone git@github.com:helmetica-framework/aludel-cloudscale.git 
+cd /workspaces/athanor/reagents/aludel-cloudscale
+----
+
+*1. Install COSI itself* — the CRDs and the central controller, which is a
+separate component from this driver:
+
+[source,console]
+----
+just install-cosi
+----
+
+*2. Give the driver a cloudscale.ch token.* It must be read-write, and it
+must live in `aludel-cloudscale-system` alongside the Deployment — `secretKeyRef` only
+resolves within the pod's own namespace:
+
+[source,console]
+----
+kubectl create namespace aludel-cloudscale-system
+kubectl -n aludel-cloudscale-system create secret generic aludel-cloudscale-credentials \
+  --from-literal=token="$CLOUDSCALE_API_TOKEN"
+----
+
+*3. Build and side-load the driver:*
+
+[source,console]
+----
+just deploy-kind
+----
+
+This builds the image, `kind load`s it into the `athanor` cluster (no registry
+needed) and rolls out the Deployment. Re-run it after every code change.
+
+*4. Provision a bucket:*
+
+[source,console]
+----
+kubectl apply -f config/samples/bucketclass.yaml
+----
+
+*5. Watch it work:*
+
+[source,console]
+----
+kubectl get bucketclaims,buckets
+kubectl -n aludel-cloudscale-system logs deployment/aludel-cloudscale -c aludel-cloudscale -f
+----
+
+A successful run leaves `Bucket` and `BucketClaim` with `READY true`, a bucket
+ID like `lpg/bc-<uuid>`, a `BucketAccess` with `READY true` and the objects
+user's ID as `ACCOUNT ID`, and a Secret with the credentials:
+
+[source,console]
+----
+kubectl get secret my-test-bucket-credentials -o json \
+  | jq '.data | map_values(@base64d)'
+----
+
+If anything is stuck, `kubectl get buckets,bucketclaims,bucketaccesses -A -o wide`
+adds an `ERROR` column with the last error from the driver or the controller.
+
+*6. Prove the credentials work* from inside the cluster:
+
+[source,console]
+----
+kubectl apply -f config/samples/s3-check.yaml
+kubectl logs -f s3-check   # prints "hello"
+kubectl delete -f config/samples/s3-check.yaml
+----
+
+`s3-check.yaml` mounts the Secret as environment variables and writes, reads
+and deletes an object with them.
+
+*7. Clean up* — deleting the `BucketClaim` removes the bucket *and* its
+objects user, because the sample `BucketClass` sets `deletionPolicy: Delete`.
+It uses `bucketDeletionPolicy: DeleteIfEmpty`, so delete any objects you left
+in the bucket first, or the claim waits until you do (see
+Deleting buckets):
+
+[source,console]
+----
+kubectl delete -f config/samples/bucketclass.yaml
+----
+
+Then confirm in the cloudscale.ch control panel that no objects user survived.
+Until a garbage collector exists, that check is manual.

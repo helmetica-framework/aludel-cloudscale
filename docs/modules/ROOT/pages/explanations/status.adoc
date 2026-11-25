@@ -1,0 +1,34 @@
+= Status
+
+Pre-alpha, and so is COSI itself. This targets COSI *v1alpha2*, which
+upstream serves only from `main`, with no release tag. Everything COSI is
+therefore pinned to one upstream commit:
+
+*https://github.com/kubernetes-sigs/container-object-storage-interface/commit/274540c69400dc1e13278b149a4e073339cefde2[`274540c69400dc1e13278b149a4e073339cefde2`]*
+(merge of PR #394, 2026-10-19)
+
+[cols="1,1,1",options="header"]
+|===
+|What |Where |Pin
+
+|CRDs and controller manifests
+|`config/crd/kustomization.yaml`
+|`?ref=274540c…`
+
+|Controller image
+|`config/crd/kustomization.yaml`
+|`objectstorage-controller:v20261019-controllerv0.2.0-rc1-354-g274540c`
+
+|Sidecar image
+|`config/manager/deployment.yaml`
+|`objectstorage-sidecar:v20261019-controllerv0.2.0-rc1-354-g274540c`
+
+|Proto Go module
+|`go.mod`
+|`sigs.k8s.io/container-object-storage-interface/proto v0.0.0-20261019183510-274540c69400`
+|===
+
+All four have to come from the same commit: the CRDs, the sidecar and the gRPC
+API change together, and upstream `main` still makes breaking changes to all
+of them. v1alpha1 (COSI v0.2.2) is not supported any more, and existing
+v1alpha1 resources are not converted.

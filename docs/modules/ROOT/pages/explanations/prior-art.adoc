@@ -1,0 +1,6 @@
+= Prior art
+
+https://github.com/vshn/provider-cloudscale[`vshn/provider-cloudscale`] solves
+the same provisioning problem as a Crossplane provider. Its split between an
+`ObjectsUser` managed resource and a `Bucket` that consumes that user's
+credentials is the same boundary `aludel-cloudscale` draws inside `DriverCreateBucket`.
