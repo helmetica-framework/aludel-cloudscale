@@ -1,0 +1,20 @@
+= Idempotency and orphans
+
+COSI retries RPCs, so `DriverCreateBucket` must not create a second objects user
+on a second attempt. Every user `aludel-cloudscale` creates is tagged:
+
+[source,text]
+----
+aludel_managed_by=<driver name>
+aludel_bucket=<bucket name>
+----
+
+`DriverCreateBucket` does a server-side tag-filtered list first and adopts an
+existing user if it finds one. If the S3 call failed on a previous attempt the
+user survives and gets reused. The same lookup is how `DriverGetBucket`,
+`DriverGrantBucketAccess` and `DriverDeleteBucket` find a bucket's owner, and
+if two users carry the tags of one bucket they all refuse to guess.
+
+A user is only genuinely orphaned if the `BucketClaim` is abandoned between the
+two steps. There is no garbage collector for that yet — the tags are there so
+one can be written.

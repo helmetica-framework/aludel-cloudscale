@@ -1,0 +1,10 @@
+= Develop
+
+[source,bash]
+----
+just build          # fmt, vet and the binary
+just test           # tests
+just lint           # fmt, vet and the COSI pin check
+just build-docker   # container image
+just docs           # build these docs, fails on warnings
+----

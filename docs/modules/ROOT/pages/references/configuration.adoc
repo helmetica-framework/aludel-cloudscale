@@ -1,0 +1,146 @@
+= Configuration
+
+The driver needs a *read-write* cloudscale.ch API token in
+`CLOUDSCALE_API_TOKEN`. Read-only tokens are rejected in effect: cloudscale.ch
+omits `secret_key` from objects user responses for them, and `aludel-cloudscale` reads the
+secret back on every access grant.
+
+== Namespaces
+
+Two different secrets are involved, and they live in different places:
+
+[cols="1,1,1",options="header"]
+|===
+|Secret |Namespace |Who creates it
+
+|`aludel-cloudscale-credentials` (the API token)
+|`aludel-cloudscale-system`, with the Deployment
+|you, once per cluster
+
+|`<credentialsSecretName>` (per-bucket S3 keys)
+|the *workload's* namespace, next to its `BucketAccess`
+|the COSI sidecar, per grant
+|===
+
+The token is a cluster-wide credential with full access to every bucket in the
+cloudscale.ch project, so it stays in the driver's namespace and is never
+exposed to consumers. Workloads only ever see the key pair of their own
+bucket's objects user.
+
+[source,console]
+----
+kubectl -n aludel-cloudscale-system create secret generic aludel-cloudscale-credentials \
+  --from-literal=token="$CLOUDSCALE_API_TOKEN"
+----
+
+Deploying into a different namespace means overriding it in both places:
+`namespace:` in `config/manager/kustomization.yaml` and `NAMESPACE` in
+`Justfile.vars.just`.
+
+== BucketClass parameters
+
+[cols="1,1,1,1",options="header"]
+|===
+|Parameter |Required |Default |Meaning
+
+|`region`
+|yes
+|—
+|cloudscale.ch region slug, e.g. `rma` or `lpg`
+
+|`endpointURL`
+|no
+|`https://objects.<region>.cloudscale.ch`
+|S3 endpoint override
+
+|`bucketDeletionPolicy`
+|no
+|`DeleteIfEmpty`
+|`DeleteIfEmpty` refuses to drop a non-empty bucket; `DeleteAll` purges every object and version first
+
+|`s3PathStyle`
+|no
+|`true`
+|Use path-style addressing instead of virtual-hosted
+|===
+
+`BucketAccessClass` needs nothing beyond `authenticationType: Key` and
+`multiBucketAccess: SingleBucket` (the default). Its parameters, if any, are
+parsed the same way, so `endpointURL` and `s3PathStyle` have to be repeated
+there if the BucketClass overrides them: they are what ends up in the
+credentials secret.
+
+== What a BucketAccess can ask for
+
+cloudscale.ch has no IAM and no bucket policies, so the only credential that
+can reach a bucket is the key pair of the objects user that created it. That
+shapes what aludel-cloudscale accepts:
+
+[cols="1,1,1",options="header"]
+|===
+|BucketAccess / class field |Accepted |Otherwise
+
+|`authenticationType`
+|`Key`
+|`ServiceAccount` → `Unimplemented`
+
+|`protocol`
+|`S3`
+|`InvalidArgument`
+
+|`bucketClaims`
+|exactly one
+|more than one → `OutOfRange`, which the sidecar reports as "driver does not support multi-bucket access"
+
+|`accessModes.objectData`, `.objectMetadata`, `.bucketMetadata`
+|`ReadWrite`, or unset
+|`ReadOnly` / `WriteOnly` → `InvalidArgument`: the owner's key pair is always full access, and handing it out for a narrower request would over-grant
+|===
+
+Every `BucketAccess` on the same bucket gets the same key pair, and revoking
+access is a no-op: rotating the owner's key would cut off every other
+`BucketAccess` too. Access ends when the bucket is deleted.
+
+The sidecar writes the credentials into the `accessSecretName` Secret in the
+workload's namespace, one key per value:
+
+[cols="1,1",options="header"]
+|===
+|Key |Value
+
+|`COSI_S3_BUCKET_ID`
+|bucket name, `bc-<BucketClaim UID>`
+
+|`COSI_S3_ENDPOINT`
+|`https://objects.<region>.cloudscale.ch`, or `endpointURL`
+
+|`COSI_S3_REGION`
+|the region slug
+
+|`COSI_S3_ADDRESSING_STYLE`
+|`Path`, or `Virtual` with `s3PathStyle: "false"`
+
+|`COSI_S3_ACCESS_KEY_ID`
+|the owning objects user's access key
+
+|`COSI_S3_ACCESS_SECRET_KEY`
+|its secret key
+|===
+
+== Deleting buckets
+
+With `deletionPolicy: Delete` on the BucketClass, deleting a `BucketClaim`
+deletes its `Bucket`, and the driver then deletes the S3 bucket followed by
+its objects user. `bucketDeletionPolicy` decides what happens to a bucket that
+still holds objects:
+
+* `DeleteAll` empties it (every object and version) and deletes it.
+* `DeleteIfEmpty` refuses with `FailedPrecondition`. The sidecar treats that
+  as retryable, so the `BucketClaim` stays in deletion, with the reason in the
+  `Bucket`'s `status.error`, until somebody empties the bucket. The next retry
+  then deletes the bucket and the objects user, and the claim goes away. A
+  Bucket's parameters are immutable, so emptying it is the only way forward.
+
+`deletionPolicy: Retain` leaves both the bucket and the objects user alone.
+
+See `config/samples/bucketclass.yaml` for a full worked example.

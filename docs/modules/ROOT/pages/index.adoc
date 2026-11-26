@@ -1,0 +1,14 @@
+= Aludel cloudscale
+
+_An aludel is the sealed vessel an alchemist sublimes into — a container you_
+_put things in and close._
+
+`aludel-cloudscale` is a https://container-object-storage-interface.sigs.k8s.io/[COSI]
+driver for https://www.cloudscale.ch[cloudscale.ch] object storage. It lets a
+Kubernetes workload ask for an S3 bucket with a `BucketClaim` and receive
+credentials in a Secret, without anybody touching the cloudscale.ch control
+panel.
+
+It implements COSI *v1alpha2*, pinned to upstream commit
+https://github.com/kubernetes-sigs/container-object-storage-interface/commit/274540c69400dc1e13278b149a4e073339cefde2[`274540c`]
+(2026-10-19). See Status and Upgrading COSI.

@@ -1,0 +1,19 @@
+* xref:index.adoc[Overview]
+
+.Explanations
+* xref:explanations/architecture.adoc[How provisioning works]
+* xref:explanations/cloudscale-behaviours.adoc[cloudscale.ch behaviours worth knowing]
+* xref:explanations/cosi-resources.adoc[What you can and cannot add to the COSI resources]
+* xref:explanations/idempotency.adoc[Idempotency and orphans]
+* xref:explanations/status.adoc[Status]
+* xref:explanations/prior-art.adoc[Prior art]
+
+.How-tos
+* xref:how-tos/install.adoc[Install and run]
+* xref:how-tos/try-on-athanor.adoc[Try it on athanor]
+* xref:how-tos/debug.adoc[Debugging]
+* xref:how-tos/upgrade-cosi.adoc[Upgrading COSI]
+* xref:how-tos/develop.adoc[how-tos/develop.adoc]
+
+.References
+* xref:references/configuration.adoc[Configuration]

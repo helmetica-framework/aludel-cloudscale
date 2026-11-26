@@ -1,0 +1,33 @@
+= Upgrading COSI
+
+Never bump one of the four pins on its own. Instead:
+
+[source,console]
+----
+just bump-cosi            # upstream main
+just bump-cosi <commit>   # or a specific commit
+----
+
+`hack/cosi-pins.sh` resolves the commit, looks up the controller and sidecar
+images built from it in `gcr.io/k8s-staging-sig-storage` (upstream builds them
+after merge, so a brand new commit may not have any yet), and moves all four
+pins. Then:
+
+. `go build ./... && just test`. Upstream changes the proto freely: read the
+   diff of `proto/cosi.proto` between the old and the new commit and adapt
+   `internal/driver`. `TestEveryRPCIsImplemented` fails if a new RPC appeared
+   that the driver does not implement yet.
+. Check `sidecar/pkg/reconciler` for new `+kubebuilder:rbac` markers and
+   mirror them in `config/rbac/role.yaml`, and the CRDs for renamed fields
+   that the printer columns in `config/crd/kustomization.yaml` read.
+. Update `config/samples`, and the commit and table in Status.
+. Run the athanor kind walkthrough above end to end.
+
+`just check-cosi-pins` (part of `just lint`, so CI runs it) fails whenever the
+four pins disagree.
+
+Renovate is told to leave all four alone. Instead it tracks upstream `main`
+as a single `cosi-upstream-commit` dependency and opens a PR at most weekly
+that moves only the `?ref=`. That PR fails `just check-cosi-pins` on purpose:
+it is the reminder. Check out its branch, run `just bump-cosi <commit>`, and
+carry on with the steps above.
